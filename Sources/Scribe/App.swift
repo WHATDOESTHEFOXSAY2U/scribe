@@ -120,9 +120,10 @@ final class Model {
         let size = persist ? d.double(forKey: "textSize") : 0
         textSize = size >= 12 && size <= 22 ? size : 15
         let saved = persist ? d.string(forKey: "library") : nil
-        library = saved.map { URL(fileURLWithPath: $0) } ?? Self.defaultLibrary
-        // Automated self-checks never stop to ask.
-        libraryChosen = !persist || saved != nil || ProcessInfo.processInfo.environment["SCRIBE_LIVE_CHECK"] != nil
+        // Automated self-checks never stop to ask, and save inside their own folder, not the user's.
+        let check = ProcessInfo.processInfo.environment["SCRIBE_LIVE_CHECK"]
+        library = check.map { URL(fileURLWithPath: $0).appendingPathComponent("library") } ?? saved.map { URL(fileURLWithPath: $0) } ?? Self.defaultLibrary
+        libraryChosen = !persist || saved != nil || check != nil
     }
 
     private func store(_ value: Any, _ key: String) {

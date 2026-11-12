@@ -8,6 +8,14 @@ struct RootView: View {
 
     private var swap: AnyTransition { reduceMotion ? .opacity : AnyTransition(.blurReplace) }
 
+    /// The screens whose content scrolls beneath the toolbar.
+    private var scrolls: Bool {
+        switch model.phase {
+        case .result, .batch: true
+        default: false
+        }
+    }
+
     var body: some View {
         ZStack {
             switch model.phase {
@@ -27,6 +35,28 @@ struct RootView: View {
                     .transition(.opacity)
             case .failed(let message, let command):
                 FailureView(model: model, message: message, command: command).transition(swap)
+            }
+        }
+        .overlay(alignment: .top) {
+            // Scrolling screens: text slides under the toolbar, so the page colour is laid over the top
+            // strip, solid behind the buttons and fading out below them. Nothing is blurred.
+            if scrolls {
+                Rectangle()
+                    .fill(Color(nsColor: .textBackgroundColor))
+                    .mask(LinearGradient(stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.74), .init(color: .clear, location: 1)], startPoint: .top, endPoint: .bottom))
+                    .frame(height: 70)
+                    .ignoresSafeArea(.container, edges: .top)
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+            }
+        }
+        .overlay(alignment: .bottom) {
+            // The same at the foot of the window, so the last line fades out instead of being cut by the edge.
+            if scrolls {
+                LinearGradient(colors: [Color(nsColor: .textBackgroundColor).opacity(0), Color(nsColor: .textBackgroundColor)], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 26)
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
             }
         }
         .frame(minWidth: 480, maxWidth: .infinity, minHeight: 380, maxHeight: .infinity)
@@ -633,9 +663,11 @@ struct BatchView: View {
                         Button("Stop") { model.cancel() }
                             .keyboardShortcut(.cancelAction)
                             .controlSize(.small)
+                            .buttonBorderShape(.capsule)
                     } else if model.waitingCount > 0 {
                         Button("Resume") { model.resume() }
                             .controlSize(.small)
+                            .buttonBorderShape(.capsule)
                     }
                 }
                 .padding(.top, 4)
@@ -651,10 +683,11 @@ struct BatchView: View {
             }
             .frame(maxWidth: 560, alignment: .leading)
             .padding(.horizontal, 32)
-            .padding(.top, 64)
-            .padding(.bottom, 32)
+            .padding(.top, 76)
+            .padding(.bottom, 40)
             .frame(maxWidth: .infinity)
         }
+        .contentMargins(.top, 56, for: .scrollIndicators)  // the scroll bar starts below the toolbar, not under its buttons
         .ignoresSafeArea(.container, edges: .top)
     }
 

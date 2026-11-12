@@ -39,6 +39,7 @@ struct TranscriptView: NSViewRepresentable {
         scroll.documentView = text
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
+        scroll.scrollerInsets = NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 0)  // clear of the toolbar's buttons and the window's corner
         return scroll
     }
 
@@ -83,7 +84,7 @@ final class ColumnTextView: NSTextView {
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        let inset = NSSize(width: max(30, ((newSize.width - columnWidth) / 2).rounded()), height: 22)
+        let inset = NSSize(width: max(30, ((newSize.width - columnWidth) / 2).rounded()), height: 30)
         if textContainerInset != inset { textContainerInset = inset }
     }
 }

@@ -41,6 +41,19 @@ enum Snapshot {
                 $0.showTimes = true
                 $0.pose(.result(sample))
             }),
+            ("14-result-scrolled", CGSize(width: 720, height: 600), { $0.pose(.result(longTranscript())) }),
+            ("15-result-scrolled-narrow", CGSize(width: 480, height: 420), {
+                $0.showTimes = true
+                $0.pose(.result(longTranscript()))
+            }),
+            ("16-batch-scrolled", CGSize(width: 720, height: 420), {
+                var items = (0..<14).map {
+                    Model.Job(id: $0, title: "Episode \($0 + 1): a conversation about building things", input: "https://example.com", seconds: 1500, thumbnail: samplePicture($0))
+                }
+                for i in 0..<9 { items[i].state = .done(words: 4000 + i * 137) }
+                items[9].state = .working
+                $0.pose(jobs: items, title: "The Product Podcast", running: true, percent: 41)
+            }),
             ("11-choose", CGSize(width: 720, height: 600), {
                 let items = (1...143).map {
                     LinkItem(title: "Episode \($0)", url: "https://example.com/\($0)", seconds: 1800, thumbnail: samplePicture($0))
@@ -79,6 +92,20 @@ enum Snapshot {
                 let window = makeWindow(model: model, size: size, dark: dark)
                 settle(0.35)
                 let frame = window.contentView!.superview!
+                if name.contains("scrolled") {
+                    // Part-way down, with the scroll bar showing, to check what happens under the toolbar.
+                    func scrollView(in view: NSView) -> NSScrollView? {
+                        if let s = view as? NSScrollView, s.documentView != nil { return s }
+                        return view.subviews.lazy.compactMap { scrollView(in: $0) }.first
+                    }
+                    if let scroll = scrollView(in: frame) {
+                        scroll.scrollerStyle = .overlay
+                        scroll.contentView.scroll(to: NSPoint(x: 0, y: 230))
+                        scroll.reflectScrolledClipView(scroll.contentView)
+                        scroll.flashScrollers()
+                        settle(0.3)
+                    }
+                }
                 if let data = png(of: frame) {
                     try? data.write(to: folder.appendingPathComponent("\(name)-\(dark ? "dark" : "light").png"))
                 }
