@@ -34,12 +34,14 @@ struct TranscriptView: NSViewRepresentable {
         text.textContainer?.widthTracksTextView = false
         text.unregisterDraggedTypes()  // drops belong to the window, which starts a new transcription
         text.setAccessibilityLabel("Transcript")
+        text.selectedTextAttributes = [.backgroundColor: NSColor.white, .foregroundColor: NSColor.black]  // selection inverts, like every key
 
         let scroll = NSScrollView()
         scroll.documentView = text
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
         scroll.scrollerInsets = NSEdgeInsets(top: 2, left: 0, bottom: 4, right: 0)
+        scroll.scrollerKnobStyle = .light
         return scroll
     }
 
@@ -54,7 +56,7 @@ struct TranscriptView: NSViewRepresentable {
         let clip = scroll.contentView
         let place = (clip.bounds.minY + scroll.contentInsets.top) / max(1, text.frame.height - clip.bounds.height)
         // About 78 characters to a line at any text size; the timestamp gutter sits outside that measure.
-        (text as? ColumnTextView)?.columnWidth = (CGFloat(size) * 37).rounded() + (times ? 58 : 0)
+        (text as? ColumnTextView)?.columnWidth = (CGFloat(size - 2) * 0.602 * 76).rounded() + (times ? 64 : 0)
         text.textStorage?.setAttributedString(Typesetter.render(transcript, times: times, size: size))
         if fresh {
             text.scrollToBeginningOfDocument(nil)
@@ -116,34 +118,33 @@ enum Typesetter {
         func add(_ string: String, _ font: NSFont, _ color: NSColor, _ style: NSParagraphStyle, kern: CGFloat = 0) {
             out.append(NSAttributedString(string: string, attributes: [.font: font, .foregroundColor: color, .paragraphStyle: style, .kern: kern]))
         }
-        // Two tones: the main ink for what was said, a quieter one for everything about it.
-        let white = NSColor.labelColor
-        let grey = NSColor.secondaryLabelColor
+        // One typeface, one weight, two tones: white for what was said, grey for everything about it.
+        let white = NSColor.white
+        let grey = NSColor(srgbRed: 0x8A / 255, green: 0x8A / 255, blue: 0x8A / 255, alpha: 1)
         func style(_ configure: (NSMutableParagraphStyle) -> Void) -> NSParagraphStyle {
             let p = NSMutableParagraphStyle()
             configure(p)
             return p
         }
-        let bodyFont = NSFont.systemFont(ofSize: size)
-        let smallFont = NSFont.monospacedDigitSystemFont(ofSize: size - 3, weight: .regular)
-        let nameFont = NSFont.systemFont(ofSize: size - 3, weight: .semibold)
-        let timeFont = NSFont.monospacedDigitSystemFont(ofSize: size - 2, weight: .regular)
-        let leading = (size * 0.32).rounded()
+        let bodyFont = NSFont.monospacedSystemFont(ofSize: size - 2, weight: .regular)
+        let smallFont = NSFont.monospacedSystemFont(ofSize: size - 4, weight: .regular)
+        let nameFont = smallFont
+        let timeFont = NSFont.monospacedSystemFont(ofSize: size - 2, weight: .regular)
+        let leading = (size * 0.4).rounded()
 
-        // Heading: the title, then one quiet line of readings.
-        add(t.title + "\n", .systemFont(ofSize: size + 9, weight: .semibold), white, style { $0.paragraphSpacing = 5 })
+        // Heading: the title, then one line of readings.
+        add(t.title.uppercased() + "\n", .monospacedSystemFont(ofSize: size + 5, weight: .regular), white, style { $0.paragraphSpacing = 6 })
         var facts = [Transcript.clock(t.audioSeconds)]
-        if t.hasSpeakers { facts.append("\(t.speakerCount) speakers") }
-        let words = t.fullText.split(separator: " ").count
-        facts.append("\(words.formatted()) \(words == 1 ? "word" : "words")")
+        if t.hasSpeakers { facts.append("\(t.speakerCount) SPK") }
+        facts.append("\(t.fullText.split(separator: " ").count) W")
         if t.wallSeconds > 0 {
             let w = t.wallSeconds
-            facts.append(w < 10 ? String(format: "%.1f s", w) : w < 100 ? "\(Int(w)) s" : Transcript.clock(w))
-            facts.append(Engine.modelName)
+            facts.append(w < 10 ? String(format: "%.1f S", w) : w < 100 ? "\(Int(w)) S" : Transcript.clock(w))
+            facts.append(Engine.modelName.uppercased())
         }
-        add(facts.joined(separator: "  ·  ") + "\n", smallFont, grey, style { $0.paragraphSpacing = (size * 0.5).rounded() })
+        add(facts.joined(separator: "   ") + "\n", smallFont, grey, style { $0.paragraphSpacing = (size * 0.5).rounded() }, kern: 2)
         if let note = t.speakerNote {
-            add(note + "\n", smallFont, grey, style { $0.paragraphSpacing = (size * 0.5).rounded() })
+            add(note.uppercased() + "\n", smallFont, grey, style { $0.paragraphSpacing = (size * 0.5).rounded() }, kern: 2)
         }
 
         let nameStyle = style {
@@ -151,7 +152,7 @@ enum Typesetter {
             $0.paragraphSpacing = 3
         }
         guard !t.sentences.isEmpty else {
-            let text = t.fullText.isEmpty ? "No speech was found in this recording." : t.fullText
+            let text = t.fullText.isEmpty ? "NO SPEECH" : t.fullText
             add(text, bodyFont, t.fullText.isEmpty ? grey : white, style { $0.lineSpacing = leading; $0.paragraphSpacingBefore = size })
             return out
         }
@@ -174,7 +175,7 @@ enum Typesetter {
             for s in t.sentences {
                 let newSpeaker = t.hasSpeakers && s.speaker != previous?.speaker
                 if newSpeaker, let who = s.speaker {
-                    add(Transcript.speakerName(who) + "\n", nameFont, grey, nameStyle)
+                    add("SPK \(who)\n", nameFont, grey, nameStyle, kern: 2)
                 }
                 let rowStyle = previous == nil ? first : !newSpeaker && s.start - previous!.end > 2 ? loose : tight
                 add(Transcript.clock(s.start) + "\t", timeFont, grey, rowStyle)
@@ -193,7 +194,7 @@ enum Typesetter {
             }
             for (i, turn) in t.turns.enumerated() {
                 if t.hasSpeakers, let who = turn.speaker {
-                    add(Transcript.speakerName(who) + "\n", nameFont, grey, nameStyle)
+                    add("SPK \(who)\n", nameFont, grey, nameStyle, kern: 2)
                 }
                 for (j, paragraph) in turn.paragraphs.enumerated() {
                     add(paragraph.text + "\n", bodyFont, white, i == 0 && j == 0 && !t.hasSpeakers ? opening : body)

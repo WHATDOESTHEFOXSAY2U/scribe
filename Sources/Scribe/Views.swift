@@ -1,26 +1,22 @@
 import AppKit
 import SwiftUI
 
-// One quiet readout. Monochrome, the system typeface, light or dark with the Mac. Every reading has
-// the same form (a label, a number, a ten-segment bar) and colour appears only as a signal: amber
-// when elevated, red when critical. Controls are small flat keys; nothing is shaded or blurred, and
-// nothing moves unless work is in progress.
+// The whole interface is one readout: black, white, one monospaced face at one weight. Every
+// reading has the same form (label, number, ten-segment bar), colour appears only as a signal
+// (amber when elevated, red when critical), and the only control is a key that inverts under the
+// pointer and fires on mouse-down. Nothing is rounded, shaded, blurred or eased.
 
 // MARK: - Language
 
 enum Ink {
-    static let white = Color.primary  // the main ink: near-black on a light page, near-white on a dark one
-    static let grey = Color.secondary
-    static let unlit = Color.primary.opacity(0.11)
-    static let line = Color.primary.opacity(0.12)
-    static let page = Color(nsColor: .textBackgroundColor)
+    static let white = Color.white
+    static let grey = Color(red: 0x8A / 255, green: 0x8A / 255, blue: 0x8A / 255)
+    static let unlit = Color(red: 0x29 / 255, green: 0x29 / 255, blue: 0x29 / 255)
+    static let line = Color(red: 0x33 / 255, green: 0x33 / 255, blue: 0x33 / 255)
     static let amber = Color(red: 0xEF / 255, green: 0x9F / 255, blue: 0x27 / 255)
     static let red = Color(red: 0xE2 / 255, green: 0x4B / 255, blue: 0x4A / 255)
 
-    /// The system face; digits keep one width so numbers do not jitter as they change.
-    static func mono(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
-        .system(size: size, weight: weight).monospacedDigit()
-    }
+    static func mono(_ size: CGFloat) -> Font { .system(size: size, weight: .regular, design: .monospaced) }
 }
 
 /// How loud a reading is. The same rule colours every bar.
@@ -36,7 +32,7 @@ enum Level {
     }
 }
 
-/// A small quiet label above or beside a value.
+/// A short grey code above or beside a value: PROG, MEM, LEFT.
 struct Tag: View {
     let text: String
     var color = Ink.grey
@@ -47,8 +43,9 @@ struct Tag: View {
     }
 
     var body: some View {
-        Text(text)
-            .font(Ink.mono(12))
+        Text(text.uppercased())
+            .font(Ink.mono(11))
+            .tracking(2)
             .foregroundStyle(color)
             .lineLimit(1)
     }
@@ -72,12 +69,12 @@ struct Bar: View {
     }
 
     private func segments(lit: @escaping (Int) -> Bool) -> some View {
-        HStack(spacing: 3) {
+        HStack(spacing: 2) {
             ForEach(0..<10, id: \.self) { i in
-                RoundedRectangle(cornerRadius: 1.5, style: .continuous).fill(lit(i) ? level.color : Ink.unlit)
+                Rectangle().fill(lit(i) ? level.color : Ink.unlit)
             }
         }
-        .frame(height: 6)
+        .frame(height: 8)
         .accessibilityHidden(true)
     }
 }
@@ -93,16 +90,16 @@ struct Gauge: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Tag(label)
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
                 Text(value)
-                    .font(Ink.mono(24, .medium))
+                    .font(Ink.mono(20))
                     .foregroundStyle(Ink.white)
                     .contentTransition(.identity)
-                if !unit.isEmpty { Text(unit).font(Ink.mono(12)).foregroundStyle(Ink.grey) }
+                if !unit.isEmpty { Text(unit).font(Ink.mono(11)).foregroundStyle(Ink.grey) }
             }
             .lineLimit(1)
-            .padding(.top, 2)
-            Bar(fraction: fraction, level: level).padding(.top, 8)
+            .padding(.top, 3)
+            Bar(fraction: fraction, level: level).padding(.top, 6)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .ignore)
@@ -151,12 +148,11 @@ final class PressLatch {
     }
 }
 
-/// The control. Plain keys are quiet text that pick up a wash under the pointer; the one main
-/// action on a screen is solid. A key that is a current choice keeps its wash.
+/// The only control. Plain or boxed; inverts under the pointer; fires on mouse-down.
 struct Key: View {
     let title: String
-    var boxed = false  // the screen's main action
-    var on = false
+    var boxed = false
+    var on = false  // a key that is a current choice stays inverted
     var enabled = true
     let action: () -> Void
     @State private var latch = PressLatch()
@@ -166,22 +162,20 @@ struct Key: View {
     }
 
     var body: some View {
-        Button(title) { latch.activate(action) }
+        Button(title.uppercased()) { latch.activate(action) }
             .buttonStyle(
                 PressStyle(fire: { latch.press(action) }) { hover, enabled in
-                    Text(title)
-                        .font(Ink.mono(13, boxed ? .medium : .regular))
-                        .foregroundStyle(boxed ? Ink.page : enabled ? Ink.white : Ink.grey.opacity(0.6))
+                    let lit = enabled && (hover || on)
+                    Text(title.uppercased())
+                        .font(Ink.mono(12))
+                        .tracking(boxed ? 2 : 0)
+                        .foregroundStyle(lit ? Color.black : enabled ? Ink.white : Ink.grey)
                         .lineLimit(1)
-                        .padding(.horizontal, boxed ? 12 : 8)
-                        .frame(height: 24)
-                        .background {
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(
-                                    boxed
-                                        ? Ink.white.opacity(enabled ? (hover ? 0.8 : 1) : 0.3)
-                                        : hover ? Color.primary.opacity(0.11) : on ? Color.primary.opacity(0.14) : Color.clear)
-                        }
+                        .padding(.leading, boxed ? 12 : 8)
+                        .padding(.trailing, boxed ? 10 : 8)
+                        .padding(.vertical, boxed ? 5 : 3)
+                        .background { Rectangle().fill(lit ? Ink.white : Color.clear) }
+                        .overlay { if boxed { Rectangle().strokeBorder(enabled ? Ink.white : Ink.grey, lineWidth: 0.5) } }
                 }
             )
             .disabled(!enabled)
@@ -189,27 +183,28 @@ struct Key: View {
     }
 }
 
-/// A switch: a small square (solid when on), the name, then On or Off.
+/// A switch: a square (solid when on), the name, then ON or OFF.
 struct Switch: View {
     let name: String
     @Binding var isOn: Bool
     @State private var latch = PressLatch()
 
     var body: some View {
-        Button(name) { latch.activate { isOn.toggle() } }
+        Button(name.uppercased()) { latch.activate { isOn.toggle() } }
             .buttonStyle(
                 PressStyle(fire: { latch.press { isOn.toggle() } }) { hover, _ in
-                    HStack(spacing: 7) {
-                        RoundedRectangle(cornerRadius: 2, style: .continuous)
-                            .fill(Ink.white.opacity(isOn ? 1 : 0.22))
+                    HStack(spacing: 8) {
+                        Rectangle()
+                            .fill((hover ? Color.black : Ink.white).opacity(isOn ? 1 : 0.25))
                             .frame(width: 8, height: 8)
-                        Text(name).foregroundStyle(Ink.white)
-                        Text(isOn ? "On" : "Off").foregroundStyle(Ink.grey)
+                        Text(name.uppercased())
+                        Text(isOn ? "ON" : "OFF").foregroundStyle(hover ? Color.black : Ink.grey)
                     }
-                    .font(Ink.mono(13))
+                    .font(Ink.mono(12))
+                    .foregroundStyle(hover ? Color.black : Ink.white)
                     .padding(.horizontal, 8)
-                    .frame(height: 24)
-                    .background { RoundedRectangle(cornerRadius: 6, style: .continuous).fill(hover ? Color.primary.opacity(0.11) : Color.clear) }
+                    .padding(.vertical, 3)
+                    .background { Rectangle().fill(hover ? Ink.white : Color.clear) }
                 }
             )
             .focusEffectDisabled()
@@ -218,7 +213,7 @@ struct Switch: View {
 }
 
 struct Hairline: View {
-    var body: some View { Rectangle().fill(Ink.line).frame(height: 1) }
+    var body: some View { Rectangle().fill(Ink.line).frame(height: 0.5) }
 }
 
 /// A key the keyboard can press (Return, Escape) without drawing anything.
@@ -271,11 +266,12 @@ struct RootView: View {
         }
         .ignoresSafeArea(.container, edges: .top)
         .frame(minWidth: 520, maxWidth: .infinity, minHeight: 380, maxHeight: .infinity)
-        .containerBackground(Ink.page, for: .window)
+        .containerBackground(Color.black, for: .window)
+        .preferredColorScheme(.dark)
         .overlay {
             // A file held over the window: the panel's edge lights, nothing else moves.
             if model.dropTargeted {
-                ConcentricRectangle().stroke(Ink.white, lineWidth: 5).ignoresSafeArea().allowsHitTesting(false)  // the outer half falls outside the window
+                Rectangle().strokeBorder(Ink.white, lineWidth: 2).ignoresSafeArea().allowsHitTesting(false)
             }
         }
         .dropDestination(for: URL.self) { urls, _ in
@@ -292,13 +288,13 @@ struct RootView: View {
     @ViewBuilder private var bandKeys: some View {
         switch model.phase {
         case .empty:
-            Text("Scribe").font(Ink.mono(13, .medium)).foregroundStyle(Ink.white).padding(.leading, 8)
+            Tag("Scribe", color: Ink.white).padding(.leading, 8)
             Spacer()
             Tag(Engine.modelName).padding(.trailing, 8)
         case .working:
             Key("Back") { model.back() }
             Spacer()
-            if model.waitingCount > 0 { Tag("\(model.waitingCount) waiting").padding(.trailing, 8) }
+            if model.waitingCount > 0 { Tag("\(model.waitingCount) wait").padding(.trailing, 8) }
             Key("Stop", boxed: true) { model.cancel() }
             Shortcut(key: .cancelAction) { model.cancel() }
         case .looking:
@@ -324,9 +320,9 @@ struct RootView: View {
         case .result:
             Key("Back") { model.back() }
             Spacer()
-            Key("Timestamps", on: model.showTimes) { model.showTimes.toggle() }
-            Key("Save text") { model.save(srt: false) }
-            Key("Subtitles") { model.save(srt: true) }
+            Key("Time", on: model.showTimes) { model.showTimes.toggle() }
+            Key("Txt") { model.save(srt: false) }
+            Key("Srt") { model.save(srt: true) }
             Key(model.copied ? "Copied" : "Copy", boxed: true) { model.copy() }
         case .failed:
             Key("Back") { model.reset() }
@@ -359,32 +355,31 @@ struct StartView: View {
 
     var body: some View {
         Readout {
-            Tag("New transcription")
-            Text(model.dropTargeted ? "Release to transcribe" : "Drop a recording")
-                .font(Ink.mono(24, .semibold))
+            Tag("Input")
+            Text(model.dropTargeted ? "RELEASE" : "DROP FILE")
+                .font(Ink.mono(20))
                 .foregroundStyle(Ink.white)
                 .padding(.top, 3)
             LinkField(model: model).padding(.top, 18)
 
             Hairline().padding(.top, 14).padding(.bottom, 12)
             HStack(spacing: 4) {
-                Key("Choose file…", boxed: true) { model.pickFile() }
-                Switch(name: "Speakers", isOn: $model.speakers).padding(.leading, 6)
+                Tag("Keys").padding(.trailing, 8)
+                Key("Open file") { model.pickFile() }
+                Switch(name: "Speakers", isOn: $model.speakers)
+                Key("Folder") { model.showLibrary() }
+                Key("Move") { model.chooseLibrary() }
                 Spacer(minLength: 0)
             }
-            HStack(spacing: 4) {
-                Tag("Saved to \(model.libraryPath)").truncationMode(.middle)
-                Key("Open") { model.showLibrary() }
-                Key("Change…") { model.chooseLibrary() }
-                Spacer(minLength: 0)
-            }
-            .padding(.top, 14)
+            Tag("Save \(model.libraryPath)")
+                .truncationMode(.middle)
+                .padding(.top, 12)
 
             Spacer(minLength: 0)
             if let summary = model.queueSummary {
                 Hairline().padding(.bottom, 12)
                 HStack(spacing: 4) {
-                    Tag("In progress").padding(.trailing, 6)
+                    Tag("Queue").padding(.trailing, 8)
                     Key(summary) { model.openQueue() }
                     Spacer(minLength: 0)
                 }
@@ -401,26 +396,28 @@ struct LinkField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            Tag("Link")
             HStack(spacing: 8) {
                 TextField("", text: $model.link)
                     .textFieldStyle(.plain)
-                    .font(Ink.mono(14))
+                    .font(Ink.mono(12))
                     .foregroundStyle(Ink.white)
                     .focused($focused)
                     .onSubmit { model.start(model.link) }
                     .accessibilityLabel("Link to transcribe")
                     .background(alignment: .leading) {
                         if model.link.isEmpty {
-                            Text("or paste a link: video, playlist or channel")
-                                .font(Ink.mono(14))
+                            Text("PASTE VIDEO PLAYLIST OR CHANNEL")
+                                .font(Ink.mono(12))
                                 .foregroundStyle(Ink.grey)
                                 .accessibilityHidden(true)
                         }
                     }
                 if hasLink { Key("Go", boxed: true) { model.start(model.link) } }
             }
-            .frame(height: 30)
-            Rectangle().fill(focused ? Ink.white : Ink.line).frame(height: 1)
+            .frame(height: 26)
+            .padding(.top, 3)
+            Rectangle().fill(focused ? Ink.white : Ink.line).frame(height: 0.5)
         }
         // No caret blinking in an idle window: the field takes focus only when clicked.
         .onAppear { DispatchQueue.main.async { focused = false } }
@@ -441,36 +438,36 @@ struct WorkingView: View {
     var body: some View {
         Readout {
             Tag(model.stage.label)
-            Text(model.title ?? "—")
-                .font(Ink.mono(24, .semibold))
+            Text((model.title ?? "—").uppercased())
+                .font(Ink.mono(20))
                 .foregroundStyle(Ink.white)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .padding(.top, 3)
 
             HStack(alignment: .top, spacing: 16) {
-                Gauge(label: "Progress", value: "\(model.percent)", unit: "%", fraction: model.determinate ? Double(model.percent) / 100 : nil)
+                Gauge(label: "Prog", value: "\(model.percent)", unit: "%", fraction: model.determinate ? Double(model.percent) / 100 : nil)
                 Gauge(
-                    label: "Speed", value: model.speed.map(String.init) ?? "—", unit: "× real time",
+                    label: "Speed", value: model.speed.map(String.init) ?? "—", unit: "X",
                     fraction: model.speed.map { Double($0) / 200 } ?? 0)
                 Gauge(
-                    label: "Memory", value: model.memoryMB.map(String.init) ?? "—", unit: "MB",
+                    label: "Mem", value: model.memoryMB.map(String.init) ?? "—", unit: "MB",
                     fraction: model.memoryMB.map { Double($0) / 1000 } ?? 0, level: memoryLevel)
                 Gauge(
-                    label: "Time left", value: left.value, unit: left.unit,
+                    label: "Left", value: left.value, unit: left.unit,
                     fraction: model.secondsLeft == nil ? 0 : 1 - Double(model.percent) / 100)
             }
             .padding(.top, 22)
 
             Hairline().padding(.top, 14).padding(.bottom, 12)
             HStack(spacing: 16) {
-                Tag("\(model.audioSeconds.map { Transcript.clock($0) } ?? "—") of audio")
-                Tag(Engine.modelName)
-                Tag("On this Mac")
+                Tag("Audio \(model.audioSeconds.map { Transcript.clock($0) } ?? "—")")
+                Tag("Model \(Engine.modelName)")
+                Tag("On device")
                 Spacer(minLength: 0)
             }
             if model.stage == .downloadingModel || (model.stage == .loadingModel && model.slowLoad) {
-                Tag(model.stage == .downloadingModel ? "First run: downloading the speech model" : "First run: preparing the speech model").padding(.top, 10)
+                Tag(model.stage == .downloadingModel ? "First run  fetching model" : "First run  preparing model").padding(.top, 10)
             }
             Spacer(minLength: 0)
         }
@@ -479,7 +476,7 @@ struct WorkingView: View {
 
     private var left: (value: String, unit: String) {
         guard let s = model.secondsLeft else { return ("—", "") }
-        let parts = Model.duration(Double(s)).split(separator: " ", maxSplits: 1).map(String.init)
+        let parts = Model.duration(Double(s)).uppercased().split(separator: " ", maxSplits: 1).map(String.init)
         return (parts.first ?? "—", parts.count > 1 ? parts[1] : "")
     }
 }
@@ -492,8 +489,8 @@ struct LookingView: View {
 
     var body: some View {
         Readout {
-            Tag("Reading the list")
-            Text("One moment").font(Ink.mono(24, .semibold)).foregroundStyle(Ink.white).padding(.top, 3)
+            Tag("Reading list")
+            Text("—").font(Ink.mono(20)).foregroundStyle(Ink.white).padding(.top, 3)
             Bar(fraction: nil).frame(maxWidth: 160).padding(.top, 6)
             Spacer(minLength: 0)
         }
@@ -510,8 +507,8 @@ struct ChooseView: View {
     var body: some View {
         Readout {
             Tag(list.isChannel ? "Channel" : "Playlist")
-            Text(list.title)
-                .font(Ink.mono(24, .semibold))
+            Text(list.title.uppercased())
+                .font(Ink.mono(20))
                 .foregroundStyle(Ink.white)
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -520,7 +517,7 @@ struct ChooseView: View {
             HStack(alignment: .top, spacing: 16) {
                 Gauge(label: "Found", value: "\(list.items.count)", unit: list.more ? "+" : "", fraction: 1)
                 Gauge(
-                    label: "Take", value: "\(model.batchCount)", unit: list.isChannel ? "newest" : "first",
+                    label: "Take", value: "\(model.batchCount)", unit: list.isChannel ? "NEWEST" : "FIRST",
                     fraction: Double(model.batchCount) / Double(max(list.items.count, 1)))
                 Gauge(label: "Audio", value: audio.value, unit: audio.unit, fraction: 0)
                 Color.clear.frame(maxWidth: .infinity, maxHeight: 1)
@@ -529,24 +526,25 @@ struct ChooseView: View {
 
             Hairline().padding(.top, 14).padding(.bottom, 12)
             HStack(spacing: 4) {
-                Tag("Transcribe").padding(.trailing, 6)
+                Tag("Take").padding(.trailing, 8)
                 ForEach(model.batchChoices, id: \.self) { n in
                     Key(n == list.items.count && !list.more ? "All" : "\(n)", on: model.batchCount == n) { model.batchCount = n }
                 }
                 Spacer(minLength: 0)
             }
             HStack(spacing: 4) {
-                Tag("Saved to \(folder.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))")
+                Tag("Save \(folder.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))")
                     .truncationMode(.middle)
-                Key("Change…") { model.chooseFolder(for: list) }
+                    .padding(.trailing, 8)
+                Key("Move") { model.chooseFolder(for: list) }
                 Spacer(minLength: 0)
             }
             .padding(.top, 10)
 
             // What is about to be taken, as a strip of pictures: content, not decoration.
-            HStack(spacing: 4) {
+            HStack(spacing: 2) {
                 ForEach(Array(list.items.prefix(min(model.batchCount, 8)).enumerated()), id: \.offset) { _, item in
-                    Thumb(url: item.thumbnail, width: 70)
+                    Thumb(url: item.thumbnail, width: 72)
                 }
             }
             .padding(.top, 18)
@@ -559,7 +557,7 @@ struct ChooseView: View {
         let lengths = list.items.prefix(model.batchCount).compactMap(\.seconds)
         guard !lengths.isEmpty else { return ("—", "") }
         let minutes = Int((lengths.reduce(0, +) / 60).rounded())
-        return minutes >= 120 ? (String(format: "%.1f", Double(minutes) / 60), "h") : ("\(minutes)", "min")
+        return minutes >= 120 ? (String(format: "%.1f", Double(minutes) / 60), "H") : ("\(minutes)", "MIN")
     }
 }
 
@@ -574,21 +572,21 @@ struct QueueView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
-                Tag(model.running ? "Queue · running" : model.waitingCount > 0 ? "Queue · stopped" : "Queue")
-                Text(model.listTitle)
-                    .font(Ink.mono(24, .semibold))
+                Tag(model.running ? "Queue  running" : model.waitingCount > 0 ? "Queue  stopped" : "Queue")
+                Text(model.listTitle.uppercased())
+                    .font(Ink.mono(20))
                     .foregroundStyle(Ink.white)
                     .lineLimit(1)
                     .padding(.top, 3)
                 HStack(alignment: .top, spacing: 16) {
                     Gauge(
-                        label: "Done", value: "\(model.doneCount)", unit: "of \(model.jobs.count)",
+                        label: "Done", value: "\(model.doneCount)", unit: "/ \(model.jobs.count)",
                         fraction: Double(model.doneCount) / Double(max(model.jobs.count, 1)))
                     Gauge(label: "Now", value: model.running ? "\(model.percent)" : "—", unit: model.running ? "%" : "", fraction: model.running ? Double(model.percent) / 100 : 0)
                     Gauge(
-                        label: "Failed", value: "\(failed)", fraction: Double(failed) / Double(max(model.jobs.count, 1)),
+                        label: "Fail", value: "\(failed)", fraction: Double(failed) / Double(max(model.jobs.count, 1)),
                         level: failed > 0 ? .critical : .normal)
-                    Gauge(label: "Time left", value: left.value, unit: left.unit, fraction: 0)
+                    Gauge(label: "Left", value: left.value, unit: left.unit, fraction: 0)
                 }
                 .padding(.top, 22)
                 Hairline().padding(.top, 14)
@@ -613,8 +611,8 @@ struct QueueView: View {
 
     private var left: (value: String, unit: String) {
         guard let text = model.queueTimeLeft else { return ("—", "") }
-        // "about 4 min left" → "4", "min"
-        let words = text.split(separator: " ").map(String.init).filter { $0 != "about" && $0 != "left" }
+        // "about 4 min left" → "4", "MIN"
+        let words = text.uppercased().split(separator: " ").map(String.init).filter { $0 != "ABOUT" && $0 != "LEFT" }
         return (words.first ?? "—", words.dropFirst().joined(separator: " "))
     }
 }
@@ -635,10 +633,10 @@ struct QueueRow: View {
 
     private var status: (text: String, color: Color) {
         switch item.state {
-        case .waiting: (item.seconds.map { "Waiting · \(Transcript.clock($0))" } ?? "Waiting", Ink.grey)
-        case .working: ("\(model.stage.label) \(model.percent)%" + (model.secondsLeft.map { " · \(Model.duration(Double($0))) left" } ?? ""), Ink.white)
-        case .done(let words): ("\(words.formatted()) words", Ink.grey)
-        case .failed(let why): (why, Ink.red)
+        case .waiting: (item.seconds.map { "WAIT \(Transcript.clock($0))" } ?? "WAIT", Ink.grey)
+        case .working: ("\(model.stage.label.uppercased()) \(model.percent) %" + (model.secondsLeft.map { "  \(Model.duration(Double($0)).uppercased())" } ?? ""), Ink.white)
+        case .done(let words): ("DONE \(words) W", Ink.white)
+        case .failed(let why): ("FAIL " + why.uppercased().trimmingCharacters(in: CharacterSet(charactersIn: ".")), Ink.red)
         }
     }
 
@@ -649,29 +647,29 @@ struct QueueRow: View {
                     PressStyle(fire: { latch.press { model.view(item.id) } }) { hover, _ in
                         let lit = hover && opens
                         HStack(spacing: 10) {
-                            Text(String(format: "%02d", number)).foregroundStyle(Ink.grey)
-                            Thumb(url: item.thumbnail, width: 46).opacity(item.state == .waiting ? 0.5 : 1)
-                            Text(item.title)
-                                .foregroundStyle(item.state == .waiting ? Ink.grey : Ink.white)
+                            Text(String(format: "%02d", number)).foregroundStyle(lit ? Color.black : Ink.grey)
+                            Thumb(url: item.thumbnail, width: 40).opacity(item.state == .waiting ? 0.5 : 1)
+                            Text(item.title.uppercased())
+                                .foregroundStyle(lit ? Color.black : item.state == .waiting ? Ink.grey : Ink.white)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                             Spacer(minLength: 12)
                             Text(status.text)
-                                .foregroundStyle(status.color)
+                                .foregroundStyle(lit ? Color.black : status.color)
                                 .lineLimit(1)
                                 .truncationMode(.tail)
                                 .layoutPriority(1)
                                 .frame(maxWidth: 300, alignment: .trailing)
                         }
-                        .font(Ink.mono(13))
+                        .font(Ink.mono(12))
                         .padding(.horizontal, 8)
-                        .frame(height: 40)
-                        .background { RoundedRectangle(cornerRadius: 6, style: .continuous).fill(lit ? Color.primary.opacity(0.08) : Color.clear) }
+                        .frame(height: 34)
+                        .background { Rectangle().fill(lit ? Ink.white : Color.clear) }
                     }
                 )
                 .allowsHitTesting(opens)  // not `disabled`: a waiting or failed row is information, not a dimmed control
                 .focusEffectDisabled()
-            if item.state == .waiting { Key("Remove") { model.remove(item.id) } }
+            if item.state == .waiting { Key("Drop") { model.remove(item.id) } }
         }
         .overlay(alignment: .bottom) { Hairline().padding(.horizontal, 8) }
     }
@@ -707,7 +705,7 @@ struct Thumb: View {
             }
         }
         .frame(width: width, height: (width * 9 / 16).rounded())
-        .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+        .clipped()
         .accessibilityHidden(true)
         .task(id: url) {
             guard image == nil, let url, let address = URL(string: url), address.scheme?.hasPrefix("http") == true else { return }
@@ -738,24 +736,24 @@ struct FailureView: View {
 
     var body: some View {
         Readout {
-            Tag("Something went wrong", color: Ink.red)
-            Text("Couldn’t transcribe")
-                .font(Ink.mono(24, .semibold))
+            Tag("Err", color: Ink.red)
+            Text("NO TRANSCRIPT")
+                .font(Ink.mono(20))
                 .foregroundStyle(Ink.white)
                 .padding(.top, 3)
             Bar(fraction: 1, level: .critical).frame(maxWidth: 160).padding(.top, 6)
 
             Hairline().padding(.top, 14).padding(.bottom, 12)
-            Text(message)
-                .font(Ink.mono(14))
+            Text(message.uppercased())
+                .font(Ink.mono(12))
                 .foregroundStyle(Ink.white)
                 .lineSpacing(5)
                 .textSelection(.enabled)
                 .frame(maxWidth: 560, alignment: .leading)
             if let command {
                 HStack(spacing: 4) {
-                    Tag("Run").padding(.trailing, 6)
-                    Text(command).font(.system(size: 13, design: .monospaced)).foregroundStyle(Ink.white).textSelection(.enabled)
+                    Tag("Run").padding(.trailing, 8)
+                    Text(command).font(Ink.mono(12)).foregroundStyle(Ink.white).textSelection(.enabled)
                     Key(copied ? "Copied" : "Copy") {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(command, forType: .string)
