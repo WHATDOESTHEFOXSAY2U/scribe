@@ -14,6 +14,9 @@ if args.isEmpty {
 } else if args[0] == "--snapshot" {
     // Hidden: draws every window state to PNG files, for checking the design without a screen.
     MainActor.assumeIsolated { Snapshot.run(into: args.count > 1 ? args[1] : "snapshots") }
+} else if args[0] == "--clicktest" {
+    // Hidden: presses the window's keys with real mouse events, off screen.
+    MainActor.assumeIsolated { Snapshot.clickTest() }
 } else {
     CommandLineTool.run(args)
 }

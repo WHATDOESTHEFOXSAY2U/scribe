@@ -1,79 +1,279 @@
 import AppKit
 import SwiftUI
 
-/// The whole window: one surface, one centred column, one state at a time.
-struct RootView: View {
-    @Bindable var model: Model
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+// The whole interface is one readout: black, white, one monospaced face at one weight. Every
+// reading has the same form (label, number, ten-segment bar), colour appears only as a signal
+// (amber when elevated, red when critical), and the only control is a key that inverts under the
+// pointer and fires on mouse-down. Nothing is rounded, shaded, blurred or eased.
 
-    private var swap: AnyTransition { reduceMotion ? .opacity : AnyTransition(.blurReplace) }
+// MARK: - Language
 
-    /// The screens whose content scrolls beneath the toolbar.
-    private var scrolls: Bool {
-        switch model.phase {
-        case .result, .batch: true
-        default: false
+enum Ink {
+    static let white = Color.white
+    static let grey = Color(red: 0x8A / 255, green: 0x8A / 255, blue: 0x8A / 255)
+    static let unlit = Color(red: 0x29 / 255, green: 0x29 / 255, blue: 0x29 / 255)
+    static let line = Color(red: 0x33 / 255, green: 0x33 / 255, blue: 0x33 / 255)
+    static let amber = Color(red: 0xEF / 255, green: 0x9F / 255, blue: 0x27 / 255)
+    static let red = Color(red: 0xE2 / 255, green: 0x4B / 255, blue: 0x4A / 255)
+
+    static func mono(_ size: CGFloat) -> Font { .system(size: size, weight: .regular, design: .monospaced) }
+}
+
+/// How loud a reading is. The same rule colours every bar.
+enum Level {
+    case normal, elevated, critical
+
+    var color: Color {
+        switch self {
+        case .normal: Ink.white
+        case .elevated: Ink.amber
+        case .critical: Ink.red
         }
+    }
+}
+
+/// A short grey code above or beside a value: PROG, MEM, LEFT.
+struct Tag: View {
+    let text: String
+    var color = Ink.grey
+
+    init(_ text: String, color: Color = Ink.grey) {
+        self.text = text
+        self.color = color
     }
 
     var body: some View {
-        ZStack {
-            switch model.phase {
-            case .empty:
-                StartView(model: model).transition(swap)
-            case .working:
-                WorkingView(model: model).transition(swap)
-            case .looking:
-                LookingView(model: model).transition(swap)
-            case .choose(let list):
-                ChooseView(model: model, list: list).transition(swap)
-            case .batch:
-                BatchView(model: model).transition(.opacity)
-            case .result(let transcript):
-                TranscriptView(transcript: transcript, id: model.resultID, times: model.showTimes, size: model.textSize)
-                    .ignoresSafeArea(.container, edges: .top)
-                    .transition(.opacity)
-            case .failed(let message, let command):
-                FailureView(model: model, message: message, command: command).transition(swap)
+        Text(text.uppercased())
+            .font(Ink.mono(11))
+            .tracking(2)
+            .foregroundStyle(color)
+            .lineLimit(1)
+    }
+}
+
+/// Ten segments, lit left to right. With no fraction to show, one segment steps along the bar.
+struct Bar: View {
+    let fraction: Double?
+    var level = Level.normal
+
+    var body: some View {
+        if let fraction {
+            segments(lit: { $0 < Int((min(max(fraction, 0), 1) * 10).rounded()) })
+        } else {
+            // Only exists while a stage has nothing measurable to report, so nothing ticks at rest.
+            TimelineView(.periodic(from: .now, by: 0.12)) { context in
+                let step = Int(context.date.timeIntervalSinceReferenceDate / 0.12) % 10
+                segments(lit: { $0 == step })
             }
         }
-        .overlay(alignment: .top) {
-            // Scrolling screens: text slides under the toolbar, so the page colour is laid over the top
-            // strip, solid behind the buttons and fading out below them. Nothing is blurred.
-            if scrolls {
-                Rectangle()
-                    .fill(Color(nsColor: .textBackgroundColor))
-                    .mask(LinearGradient(stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.74), .init(color: .clear, location: 1)], startPoint: .top, endPoint: .bottom))
-                    .frame(height: 70)
-                    .ignoresSafeArea(.container, edges: .top)
-                    .allowsHitTesting(false)
-                    .transition(.opacity)
+    }
+
+    private func segments(lit: @escaping (Int) -> Bool) -> some View {
+        HStack(spacing: 2) {
+            ForEach(0..<10, id: \.self) { i in
+                Rectangle().fill(lit(i) ? level.color : Ink.unlit)
             }
         }
-        .overlay(alignment: .bottom) {
-            // The same at the foot of the window, so the last line fades out instead of being cut by the edge.
-            if scrolls {
-                LinearGradient(colors: [Color(nsColor: .textBackgroundColor).opacity(0), Color(nsColor: .textBackgroundColor)], startPoint: .top, endPoint: .bottom)
-                    .frame(height: 26)
-                    .allowsHitTesting(false)
-                    .transition(.opacity)
+        .frame(height: 8)
+        .accessibilityHidden(true)
+    }
+}
+
+/// One reading: label, value with its unit, bar.
+struct Gauge: View {
+    let label: String
+    let value: String
+    var unit = ""
+    var fraction: Double? = 0
+    var level = Level.normal
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Tag(label)
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Text(value)
+                    .font(Ink.mono(20))
+                    .foregroundStyle(Ink.white)
+                    .contentTransition(.identity)
+                if !unit.isEmpty { Text(unit).font(Ink.mono(11)).foregroundStyle(Ink.grey) }
             }
+            .lineLimit(1)
+            .padding(.top, 3)
+            Bar(fraction: fraction, level: level).padding(.top, 6)
         }
-        .frame(minWidth: 480, maxWidth: .infinity, minHeight: 380, maxHeight: .infinity)
-        // One opaque page colour as the window's own background: no material, so nothing behind the window is blurred.
-        .containerBackground(Color(nsColor: .textBackgroundColor), for: .window)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityValue("\(value) \(unit)")
+    }
+}
+
+/// Makes a real button fire the moment it is pressed rather than when it is let go, and draw
+/// whatever `face` returns for (hovered, enabled). The button's own action still serves the
+/// keyboard and assistive technology, without firing twice after a mouse press.
+struct PressStyle<Face: View>: ButtonStyle {
+    let fire: () -> Void
+    @ViewBuilder let face: (_ hover: Bool, _ enabled: Bool) -> Face
+
+    func makeBody(configuration: Configuration) -> some View {
+        Pressable(isPressed: configuration.isPressed, fire: fire, face: face)
+    }
+
+    private struct Pressable: View {
+        let isPressed: Bool
+        let fire: () -> Void
+        let face: (Bool, Bool) -> Face
+        @State private var hover = false
+        @Environment(\.isEnabled) private var enabled
+
+        var body: some View {
+            face(hover && enabled, enabled)
+                .contentShape(Rectangle())
+                .onHover { hover = $0 }
+                .onChange(of: isPressed) { _, pressed in if pressed, enabled { fire() } }
+        }
+    }
+}
+
+/// Tells a press (already acted on at mouse-down) from an activation by keyboard or VoiceOver.
+final class PressLatch {
+    private var pressed = false
+    func press(_ action: () -> Void) {
+        pressed = true
+        action()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.pressed = false }
+    }
+    func activate(_ action: () -> Void) {
+        if pressed { pressed = false } else { action() }
+    }
+}
+
+/// The only control. Plain or boxed; inverts under the pointer; fires on mouse-down.
+struct Key: View {
+    let title: String
+    var boxed = false
+    var on = false  // a key that is a current choice stays inverted
+    var enabled = true
+    let action: () -> Void
+    @State private var latch = PressLatch()
+
+    init(_ title: String, boxed: Bool = false, on: Bool = false, enabled: Bool = true, action: @escaping () -> Void) {
+        (self.title, self.boxed, self.on, self.enabled, self.action) = (title, boxed, on, enabled, action)
+    }
+
+    var body: some View {
+        Button(title.uppercased()) { latch.activate(action) }
+            .buttonStyle(
+                PressStyle(fire: { latch.press(action) }) { hover, enabled in
+                    let lit = enabled && (hover || on)
+                    Text(title.uppercased())
+                        .font(Ink.mono(12))
+                        .tracking(boxed ? 2 : 0)
+                        .foregroundStyle(lit ? Color.black : enabled ? Ink.white : Ink.grey)
+                        .lineLimit(1)
+                        .padding(.leading, boxed ? 12 : 8)
+                        .padding(.trailing, boxed ? 10 : 8)
+                        .padding(.vertical, boxed ? 5 : 3)
+                        .background { Rectangle().fill(lit ? Ink.white : Color.clear) }
+                        .overlay { if boxed { Rectangle().strokeBorder(enabled ? Ink.white : Ink.grey, lineWidth: 0.5) } }
+                }
+            )
+            .disabled(!enabled)
+            .focusEffectDisabled()
+    }
+}
+
+/// A switch: a square (solid when on), the name, then ON or OFF.
+struct Switch: View {
+    let name: String
+    @Binding var isOn: Bool
+    @State private var latch = PressLatch()
+
+    var body: some View {
+        Button(name.uppercased()) { latch.activate { isOn.toggle() } }
+            .buttonStyle(
+                PressStyle(fire: { latch.press { isOn.toggle() } }) { hover, _ in
+                    HStack(spacing: 8) {
+                        Rectangle()
+                            .fill((hover ? Color.black : Ink.white).opacity(isOn ? 1 : 0.25))
+                            .frame(width: 8, height: 8)
+                        Text(name.uppercased())
+                        Text(isOn ? "ON" : "OFF").foregroundStyle(hover ? Color.black : Ink.grey)
+                    }
+                    .font(Ink.mono(12))
+                    .foregroundStyle(hover ? Color.black : Ink.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background { Rectangle().fill(hover ? Ink.white : Color.clear) }
+                }
+            )
+            .focusEffectDisabled()
+            .accessibilityValue(isOn ? "on" : "off")
+    }
+}
+
+struct Hairline: View {
+    var body: some View { Rectangle().fill(Ink.line).frame(height: 0.5) }
+}
+
+/// A key the keyboard can press (Return, Escape) without drawing anything.
+struct Shortcut: View {
+    let key: KeyboardShortcut
+    let action: () -> Void
+
+    var body: some View {
+        Button("", action: action)
+            .keyboardShortcut(key)
+            .buttonStyle(.plain)
+            .frame(width: 0, height: 0)
+            .opacity(0)
+            .accessibilityHidden(true)
+    }
+}
+
+// MARK: - Window
+
+/// One black panel: a band of keys beside the window's own buttons, a hairline, then the readout.
+struct RootView: View {
+    @Bindable var model: Model
+
+    static let margin: CGFloat = 28
+    static let band: CGFloat = 38  // no toolbar: anything of the system's in this strip would sit on top of the keys
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 4) {
+                bandKeys
+            }
+            .padding(.leading, 72)  // clear of close, minimise and zoom
+            .padding(.trailing, Self.margin - 8)
+            .frame(height: 28)  // the title bar's own height, so the keys sit level with those buttons
+            .padding(.bottom, Self.band - 28)
+            Hairline()
+            Group {
+                switch model.phase {
+                case .empty: StartView(model: model)
+                case .working: WorkingView(model: model)
+                case .looking: LookingView(model: model)
+                case .choose(let list): ChooseView(model: model, list: list)
+                case .batch: QueueView(model: model)
+                case .result(let transcript):
+                    TranscriptView(transcript: transcript, id: model.resultID, times: model.showTimes, size: model.textSize)
+                case .failed(let message, let command): FailureView(model: model, message: message, command: command)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .ignoresSafeArea(.container, edges: .top)
+        .frame(minWidth: 520, maxWidth: .infinity, minHeight: 380, maxHeight: .infinity)
+        .containerBackground(Color.black, for: .window)
+        .preferredColorScheme(.dark)
         .overlay {
+            // A file held over the window: the panel's edge lights, nothing else moves.
             if model.dropTargeted {
-                // Drawn on the window's own edge: the outer half of the line falls outside and is clipped away.
-                ConcentricRectangle()
-                    .fill(.tint.opacity(0.07))
-                    .stroke(.tint, lineWidth: 6)
-                    .ignoresSafeArea()
-                    .allowsHitTesting(false)
-                    .transition(.opacity)
+                Rectangle().strokeBorder(Ink.white, lineWidth: 2).ignoresSafeArea().allowsHitTesting(false)
             }
         }
-        .animation(.easeOut(duration: 0.15), value: model.dropTargeted)
         .dropDestination(for: URL.self) { urls, _ in
             guard !urls.isEmpty else { return false }
             urls.forEach { model.open($0) }
@@ -81,135 +281,110 @@ struct RootView: View {
         } isTargeted: {
             model.dropTargeted = $0
         }
-        .toolbar {
-            if model.transcript != nil {
-                ToolbarItem(placement: .navigation) { BackButton(model: model) }
-                ToolbarSpacer(.flexible)
-                ToolbarItem {
-                    Toggle(isOn: $model.showTimes) { Label("Timestamps", systemImage: "clock") }
-                        .help("Show timestamps (⇧⌘T)")
-                }
-                ToolbarSpacer(.fixed)
-                ToolbarItem {
-                    Menu {
-                        Button("Save as Text…") { model.save(srt: false) }
-                        Button("Save as Subtitles…") { model.save(srt: true) }
-                    } label: {
-                        Label("Save", systemImage: "square.and.arrow.down")
-                    }
-                    .help("Save the transcript")
-                }
-                ToolbarItem {
-                    Button { model.copy() } label: {
-                        Label(model.copied ? "Copied" : "Copy Transcript", systemImage: model.copied ? "checkmark" : "doc.on.doc")
-                            .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
-                    }
-                    .help("Copy the whole transcript (⇧⌘C)")
-                }
-            } else if case .working = model.phase {
-                ToolbarItem(placement: .navigation) { BackButton(model: model) }
-            } else if case .batch = model.phase {
-                ToolbarItem(placement: .navigation) { BackButton(model: model) }
-                ToolbarSpacer(.flexible)
-                ToolbarItem {
-                    Button { model.revealBatch() } label: { Label("Show in Finder", systemImage: "folder") }
-                        .help("Open the folder the transcripts are saved in")
-                }
-                ToolbarItem {
-                    Button { model.clearFinished() } label: { Label("Clear Finished", systemImage: "trash") }
-                        .disabled(model.doneCount == 0 && !model.jobs.contains { if case .failed = $0.state { true } else { false } })
-                        .help("Remove finished rows from this list (saved files stay)")
-                }
-            } else {
-                // An invisible item keeps the toolbar, and with it the title bar's height, in every state:
-                // without it the close, minimise and zoom buttons jump when a transcript appears.
-                ToolbarItem(placement: .navigation) {
-                    Color.clear.frame(width: 1, height: 1).accessibilityHidden(true)
-                }
-                .sharedBackgroundVisibility(.hidden)
-            }
-        }
-        .toolbar(removing: .title)
-        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .navigationTitle(model.windowTitle)
+    }
+
+    /// The keys for the screen in view: the way back on the left, what can be done on the right.
+    @ViewBuilder private var bandKeys: some View {
+        switch model.phase {
+        case .empty:
+            Tag("Scribe", color: Ink.white).padding(.leading, 8)
+            Spacer()
+            Tag(Engine.modelName).padding(.trailing, 8)
+        case .working:
+            Key("Back") { model.back() }
+            Spacer()
+            if model.waitingCount > 0 { Tag("\(model.waitingCount) wait").padding(.trailing, 8) }
+            Key("Stop", boxed: true) { model.cancel() }
+            Shortcut(key: .cancelAction) { model.cancel() }
+        case .looking:
+            Key("Back") { model.back() }
+            Spacer()
+            Shortcut(key: .cancelAction) { model.back() }
+        case .choose(let list):
+            Key("Back") { model.reset() }
+            Spacer()
+            Key("Transcribe", boxed: true) { model.startBatch(list) }
+            Shortcut(key: .defaultAction) { model.startBatch(list) }
+            Shortcut(key: .cancelAction) { model.reset() }
+        case .batch:
+            Key("Back") { model.back() }
+            Spacer()
+            Key("Folder") { model.revealBatch() }
+            Key("Clear", enabled: model.jobs.contains { $0.state != .waiting && $0.state != .working }) { model.clearFinished() }
+            if model.running {
+                Key("Stop", boxed: true) { model.cancel() }
+            } else if model.waitingCount > 0 {
+                Key("Resume", boxed: true) { model.resume() }
+            }
+        case .result:
+            Key("Back") { model.back() }
+            Spacer()
+            Key("Time", on: model.showTimes) { model.showTimes.toggle() }
+            Key("Txt") { model.save(srt: false) }
+            Key("Srt") { model.save(srt: true) }
+            Key(model.copied ? "Copied" : "Copy", boxed: true) { model.copy() }
+        case .failed:
+            Key("Back") { model.reset() }
+            Spacer()
+            Key("Retry", boxed: true, enabled: model.canRetry) { model.retry() }
+            Shortcut(key: .defaultAction) { model.retry() }
+            Shortcut(key: .cancelAction) { model.reset() }
+        }
     }
 }
 
-// MARK: - Empty
+/// The frame every readout screen shares: the same margins, everything from the left edge.
+struct Readout<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) { content }
+            .padding(.horizontal, RootView.margin)
+            .padding(.top, 22)
+            .padding(.bottom, 20)
+            .frame(maxWidth: 720, maxHeight: .infinity, alignment: .topLeading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+// MARK: - Start
 
 struct StartView: View {
     @Bindable var model: Model
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        VStack(spacing: 0) {
-            Image(systemName: model.dropTargeted ? "arrow.down" : "waveform")
-                .font(.system(size: 40, weight: .light))
-                .foregroundStyle(model.dropTargeted ? AnyShapeStyle(.tint) : AnyShapeStyle(.tertiary))
-                .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
-                .frame(height: 48)
-                .accessibilityHidden(true)
-            Text(model.dropTargeted ? "Release to transcribe" : "Drop a recording")
-                .font(.system(size: 28, weight: .semibold))
-                .padding(.top, 14)
-            VStack(spacing: 0) {
-                LinkField(model: model)
-                    .padding(.top, 30)
-                Button("Choose File…") { model.pickFile() }
-                    .controlSize(.large)
-                    .padding(.top, 16)
+        Readout {
+            Tag("Input")
+            Text(model.dropTargeted ? "RELEASE" : "DROP FILE")
+                .font(Ink.mono(20))
+                .foregroundStyle(Ink.white)
+                .padding(.top, 3)
+            LinkField(model: model).padding(.top, 18)
+
+            Hairline().padding(.top, 14).padding(.bottom, 12)
+            HStack(spacing: 4) {
+                Tag("Keys").padding(.trailing, 8)
+                Key("Open file") { model.pickFile() }
+                Switch(name: "Speakers", isOn: $model.speakers)
+                Key("Folder") { model.showLibrary() }
+                Key("Move") { model.chooseLibrary() }
+                Spacer(minLength: 0)
             }
-            .opacity(model.dropTargeted ? 0.25 : 1)
-        }
-        .padding(.horizontal, 32)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .overlay(alignment: .bottom) {
-            VStack(spacing: 14) {
-                if let summary = model.queueSummary {
-                    Button { model.openQueue() } label: {
-                        HStack(spacing: 8) {
-                            if model.running { ProgressView().controlSize(.small) }
-                            Text(summary).monospacedDigit()
-                            Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
-                        }
-                        .font(.system(size: 12))
-                        .padding(.horizontal, 14)
-                        .frame(height: 30)
-                        .background(.primary.opacity(0.06), in: Capsule())
-                        .contentShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Show what is being transcribed")
-                    .transition(.opacity)
+            Tag("Save \(model.libraryPath)")
+                .truncationMode(.middle)
+                .padding(.top, 12)
+
+            Spacer(minLength: 0)
+            if let summary = model.queueSummary {
+                Hairline().padding(.bottom, 12)
+                HStack(spacing: 4) {
+                    Tag("Queue").padding(.trailing, 8)
+                    Key(summary) { model.openQueue() }
+                    Spacer(minLength: 0)
                 }
-            HStack(spacing: 18) {
-                Toggle("Identify speakers", isOn: $model.speakers)
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
-                    .help("Label who is speaking. Turning this off is faster and uses less memory, most of all on long recordings.")
-                Menu {
-                    Section("Saved to \(model.libraryPath)") {
-                        Button("Open Folder") { model.showLibrary() }
-                        Button("Change Folder…") { model.chooseLibrary() }
-                    }
-                } label: {
-                    Label("Transcripts", systemImage: "folder")
-                }
-                .menuStyle(.button)
-                .buttonStyle(.plain)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .help("Every transcript is saved as a text file in \(model.libraryPath)")
-                Label(Engine.modelName, systemImage: "cpu")
-                    .help("The speech model doing the transcribing. It runs on this Mac; nothing is uploaded.")
             }
-            .font(.system(size: 12))
-            .foregroundStyle(.secondary)
-            }
-            .opacity(model.dropTargeted ? 0.25 : 1)
-            .padding(.bottom, 22)
         }
-        .ignoresSafeArea(.container, edges: .top)
     }
 }
 
@@ -217,45 +392,33 @@ struct LinkField: View {
     @Bindable var model: Model
     @FocusState private var focused: Bool
 
+    private var hasLink: Bool { !model.link.trimmingCharacters(in: .whitespaces).isEmpty }
+
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "link")
-                .foregroundStyle(.tertiary)
-                .accessibilityHidden(true)
-            TextField("", text: $model.link)
-                .textFieldStyle(.plain)
-                .font(.system(size: 14))
-                .focused($focused)
-                .onSubmit { model.start(model.link) }
-                .accessibilityLabel("Link to transcribe")
-                // The field's own prompt is drawn as dark as typed text; this one reads as the quiet second line it is.
-                .background(alignment: .leading) {
-                    if model.link.isEmpty {
-                        Text("or paste a link: video, playlist or channel")
-                            .font(.system(size: 14))
-                            .foregroundStyle(.secondary)
-                            .accessibilityHidden(true)
+        VStack(alignment: .leading, spacing: 0) {
+            Tag("Link")
+            HStack(spacing: 8) {
+                TextField("", text: $model.link)
+                    .textFieldStyle(.plain)
+                    .font(Ink.mono(12))
+                    .foregroundStyle(Ink.white)
+                    .focused($focused)
+                    .onSubmit { model.start(model.link) }
+                    .accessibilityLabel("Link to transcribe")
+                    .background(alignment: .leading) {
+                        if model.link.isEmpty {
+                            Text("PASTE VIDEO PLAYLIST OR CHANNEL")
+                                .font(Ink.mono(12))
+                                .foregroundStyle(Ink.grey)
+                                .accessibilityHidden(true)
+                        }
                     }
-                }
-            if !model.link.trimmingCharacters(in: .whitespaces).isEmpty {
-                Button { model.start(model.link) } label: {
-                    Image(systemName: "arrow.right.circle.fill")
-                        .font(.system(size: 18))
-                        .foregroundStyle(.tint)
-                }
-                .buttonStyle(.plain)
-                .help("Transcribe this link (Return)")
-                .accessibilityLabel("Transcribe link")
-                .transition(.opacity)
+                if hasLink { Key("Go", boxed: true) { model.start(model.link) } }
             }
+            .frame(height: 26)
+            .padding(.top, 3)
+            Rectangle().fill(focused ? Ink.white : Ink.line).frame(height: 0.5)
         }
-        .padding(.leading, 14)
-        .padding(.trailing, 9)
-        .frame(height: 38)
-        .frame(maxWidth: 360)
-        .background(.primary.opacity(focused ? 0.1 : 0.075), in: Capsule())
-        .animation(.easeOut(duration: 0.15), value: model.link.isEmpty)
-        .animation(.easeOut(duration: 0.15), value: focused)
         // No caret blinking in an idle window: the field takes focus only when clicked.
         .onAppear { DispatchQueue.main.async { focused = false } }
     }
@@ -265,150 +428,254 @@ struct LinkField: View {
 
 struct WorkingView: View {
     let model: Model
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private let barWidth = 280.0
+    /// Memory is the one reading here with a ceiling worth warning about.
+    private var memoryLevel: Level {
+        guard let mb = model.memoryMB else { return .normal }
+        return mb >= 1200 ? .critical : mb >= 600 ? .elevated : .normal
+    }
 
     var body: some View {
-        VStack(spacing: 0) {
-            if let thumbnail = model.thumbnail {
-                Thumb(url: thumbnail, width: 144)
-                    .padding(.bottom, 22)
-                    .transition(.opacity)
-            }
-            VStack(spacing: 0) {
-                HStack(alignment: .firstTextBaseline, spacing: 3) {
-                    // An unseen twin of the sign on the other side keeps the digits themselves on the centre line.
-                    Text("%")
-                        .font(.system(size: 26, weight: .light))
-                        .hidden()
-                        .accessibilityHidden(true)
-                    Text("\(model.percent)")
-                        .font(.system(size: 76, weight: .thin))
-                        .monospacedDigit()
-                        .tracking(-3)
-                        // Deliberately no rolling-digit effect: at this size it rasterises every frame on the
-                        // CPU and left about 40 MB of glyph caches behind. Steady digits read as a counter anyway.
-                        .contentTransition(.identity)
-                    Text("%")
-                        .font(.system(size: 26, weight: .light))
-                        .foregroundStyle(.secondary)
-                }
-                .frame(height: 80)
-
-                ZStack(alignment: .leading) {
-                    Capsule().fill(.primary.opacity(0.1))
-                    Capsule().fill(.primary).frame(width: max(0, barWidth * Double(model.percent) / 100))
-                    if !model.determinate { Glide(animated: !reduceMotion) }
-                }
-                .frame(width: barWidth, height: 3)
-                .clipShape(Capsule())
-                .padding(.top, 18)
-
-                Text(model.stage.label)
-                    .font(.system(size: 15, weight: .medium))
-                    .id(model.stage)
-                    .transition(reduceMotion ? .opacity : AnyTransition(.blurReplace))
-                    .padding(.top, 20)
-            }
-            .animation(reduceMotion ? nil : .smooth(duration: 0.3), value: model.percent)
-            .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: model.stage)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(model.stage.label)
-            .accessibilityValue("\(model.percent) percent")
-
-            Text(model.caption)
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
+        Readout {
+            Tag(model.stage.label)
+            Text((model.title ?? "—").uppercased())
+                .font(Ink.mono(20))
+                .foregroundStyle(Ink.white)
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .frame(maxWidth: 340)
-                .padding(.top, 5)
+                .padding(.top, 3)
 
-            Metrics(model: model)
-                .padding(.top, 26)
+            HStack(alignment: .top, spacing: 16) {
+                Gauge(label: "Prog", value: "\(model.percent)", unit: "%", fraction: model.determinate ? Double(model.percent) / 100 : nil)
+                Gauge(
+                    label: "Speed", value: model.speed.map(String.init) ?? "—", unit: "X",
+                    fraction: model.speed.map { Double($0) / 200 } ?? 0)
+                Gauge(
+                    label: "Mem", value: model.memoryMB.map(String.init) ?? "—", unit: "MB",
+                    fraction: model.memoryMB.map { Double($0) / 1000 } ?? 0, level: memoryLevel)
+                Gauge(
+                    label: "Left", value: left.value, unit: left.unit,
+                    fraction: model.secondsLeft == nil ? 0 : 1 - Double(model.percent) / 100)
+            }
+            .padding(.top, 22)
 
-            Button("Cancel") { model.cancel() }
-                .keyboardShortcut(.cancelAction)
-                .controlSize(.large)
-                .padding(.top, 30)
+            Hairline().padding(.top, 14).padding(.bottom, 12)
+            HStack(spacing: 16) {
+                Tag("Audio \(model.audioSeconds.map { Transcript.clock($0) } ?? "—")")
+                Tag("Model \(Engine.modelName)")
+                Tag("On device")
+                Spacer(minLength: 0)
+            }
+            if model.stage == .downloadingModel || (model.stage == .loadingModel && model.slowLoad) {
+                Tag(model.stage == .downloadingModel ? "First run  fetching model" : "First run  preparing model").padding(.top, 10)
+            }
+            Spacer(minLength: 0)
         }
-        .padding(.horizontal, 32)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .ignoresSafeArea(.container, edges: .top)
-        .animation(reduceMotion ? nil : .smooth(duration: 0.3), value: model.thumbnail)
-        .overlay(alignment: .bottom) {
-            HStack(spacing: 10) {
-                ModelChip()
-                if model.waitingCount > 0 {
-                    Text("\(model.waitingCount) more waiting").font(.system(size: 12)).foregroundStyle(.secondary)
+        .accessibilityElement(children: .contain)
+    }
+
+    private var left: (value: String, unit: String) {
+        guard let s = model.secondsLeft else { return ("—", "") }
+        let parts = Model.duration(Double(s)).uppercased().split(separator: " ", maxSplits: 1).map(String.init)
+        return (parts.first ?? "—", parts.count > 1 ? parts[1] : "")
+    }
+}
+
+// MARK: - Playlists and channels
+
+/// The second or two it takes to read what a playlist or channel holds.
+struct LookingView: View {
+    let model: Model
+
+    var body: some View {
+        Readout {
+            Tag("Reading list")
+            Text("—").font(Ink.mono(20)).foregroundStyle(Ink.white).padding(.top, 3)
+            Bar(fraction: nil).frame(maxWidth: 160).padding(.top, 6)
+            Spacer(minLength: 0)
+        }
+    }
+}
+
+/// A playlist or channel was pasted: how many of its recordings to take, and where they go.
+struct ChooseView: View {
+    @Bindable var model: Model
+    let list: LinkList
+
+    private var folder: URL { model.batchFolder ?? model.defaultFolder(for: list) }
+
+    var body: some View {
+        Readout {
+            Tag(list.isChannel ? "Channel" : "Playlist")
+            Text(list.title.uppercased())
+                .font(Ink.mono(20))
+                .foregroundStyle(Ink.white)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .padding(.top, 3)
+
+            HStack(alignment: .top, spacing: 16) {
+                Gauge(label: "Found", value: "\(list.items.count)", unit: list.more ? "+" : "", fraction: 1)
+                Gauge(
+                    label: "Take", value: "\(model.batchCount)", unit: list.isChannel ? "NEWEST" : "FIRST",
+                    fraction: Double(model.batchCount) / Double(max(list.items.count, 1)))
+                Gauge(label: "Audio", value: audio.value, unit: audio.unit, fraction: 0)
+                Color.clear.frame(maxWidth: .infinity, maxHeight: 1)
+            }
+            .padding(.top, 22)
+
+            Hairline().padding(.top, 14).padding(.bottom, 12)
+            HStack(spacing: 4) {
+                Tag("Take").padding(.trailing, 8)
+                ForEach(model.batchChoices, id: \.self) { n in
+                    Key(n == list.items.count && !list.more ? "All" : "\(n)", on: model.batchCount == n) { model.batchCount = n }
+                }
+                Spacer(minLength: 0)
+            }
+            HStack(spacing: 4) {
+                Tag("Save \(folder.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))")
+                    .truncationMode(.middle)
+                    .padding(.trailing, 8)
+                Key("Move") { model.chooseFolder(for: list) }
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 10)
+
+            // What is about to be taken, as a strip of pictures: content, not decoration.
+            HStack(spacing: 2) {
+                ForEach(Array(list.items.prefix(min(model.batchCount, 8)).enumerated()), id: \.offset) { _, item in
+                    Thumb(url: item.thumbnail, width: 72)
                 }
             }
-            .padding(.bottom, 22)
+            .padding(.top, 18)
+            Spacer(minLength: 0)
         }
     }
-}
 
-/// Says which speech model is doing the work, and that it is doing it here.
-struct ModelChip: View {
-    var body: some View {
-        Label("\(Engine.modelName) · on this Mac", systemImage: "cpu")
-            .font(.system(size: 12))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 12)
-            .frame(height: 26)
-            .background(.primary.opacity(0.06), in: Capsule())
-            .help("The speech model doing the transcribing. It runs on this Mac; nothing is uploaded.")
-            .accessibilityLabel("Speech model: \(Engine.modelName), running on this Mac")
+    /// Total running time of what would be taken, when the site gave lengths.
+    private var audio: (value: String, unit: String) {
+        let lengths = list.items.prefix(model.batchCount).compactMap(\.seconds)
+        guard !lengths.isEmpty else { return ("—", "") }
+        let minutes = Int((lengths.reduce(0, +) / 60).rounded())
+        return minutes >= 120 ? (String(format: "%.1f", Double(minutes) / 60), "H") : ("\(minutes)", "MIN")
     }
 }
 
-/// The one way out of a job, a transcript or the queue. It never stops anything.
-struct BackButton: View {
+// MARK: - Queue
+
+/// Everything asked for this session. The row in hand opens its progress, finished rows their transcript.
+struct QueueView: View {
     let model: Model
 
+    private var failed: Int { model.jobs.count { if case .failed = $0.state { true } else { false } } }
+
     var body: some View {
-        Button { model.back() } label: {
-            Label("Back", systemImage: "chevron.left").labelStyle(.titleAndIcon)
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
+                Tag(model.running ? "Queue  running" : model.waitingCount > 0 ? "Queue  stopped" : "Queue")
+                Text(model.listTitle.uppercased())
+                    .font(Ink.mono(20))
+                    .foregroundStyle(Ink.white)
+                    .lineLimit(1)
+                    .padding(.top, 3)
+                HStack(alignment: .top, spacing: 16) {
+                    Gauge(
+                        label: "Done", value: "\(model.doneCount)", unit: "/ \(model.jobs.count)",
+                        fraction: Double(model.doneCount) / Double(max(model.jobs.count, 1)))
+                    Gauge(label: "Now", value: model.running ? "\(model.percent)" : "—", unit: model.running ? "%" : "", fraction: model.running ? Double(model.percent) / 100 : 0)
+                    Gauge(
+                        label: "Fail", value: "\(failed)", fraction: Double(failed) / Double(max(model.jobs.count, 1)),
+                        level: failed > 0 ? .critical : .normal)
+                    Gauge(label: "Left", value: left.value, unit: left.unit, fraction: 0)
+                }
+                .padding(.top, 22)
+                Hairline().padding(.top, 14)
+            }
+            .padding(.horizontal, RootView.margin)
+            .padding(.top, 22)
+            .frame(maxWidth: 720, alignment: .leading)
+
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(Array(model.jobs.enumerated()), id: \.element.id) { n, item in
+                        QueueRow(model: model, item: item, number: n + 1)
+                    }
+                }
+                .padding(.horizontal, RootView.margin - 8)
+                .padding(.vertical, 6)
+                .frame(maxWidth: 720, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
-        .help(model.running ? "Back (⌘[). The job keeps going." : "Back (⌘[)")
+    }
+
+    private var left: (value: String, unit: String) {
+        guard let text = model.queueTimeLeft else { return ("—", "") }
+        // "about 4 min left" → "4", "MIN"
+        let words = text.uppercased().split(separator: " ").map(String.init).filter { $0 != "ABOUT" && $0 != "LEFT" }
+        return (words.first ?? "—", words.dropFirst().joined(separator: " "))
     }
 }
 
-/// Three quiet numbers under the bar: how fast the job is going, what it costs, how much there is.
-/// A number that is not known yet shows as a dash, so the row never changes shape.
-struct Metrics: View {
+/// One line of the queue, a full-width key when it leads somewhere.
+struct QueueRow: View {
     let model: Model
+    let item: Model.Job
+    let number: Int
+    @State private var latch = PressLatch()
+
+    private var opens: Bool {
+        switch item.state {
+        case .done, .working: true
+        default: false
+        }
+    }
+
+    private var status: (text: String, color: Color) {
+        switch item.state {
+        case .waiting: (item.seconds.map { "WAIT \(Transcript.clock($0))" } ?? "WAIT", Ink.grey)
+        case .working: ("\(model.stage.label.uppercased()) \(model.percent) %" + (model.secondsLeft.map { "  \(Model.duration(Double($0)).uppercased())" } ?? ""), Ink.white)
+        case .done(let words): ("DONE \(words) W", Ink.white)
+        case .failed(let why): ("FAIL " + why.uppercased().trimmingCharacters(in: CharacterSet(charactersIn: ".")), Ink.red)
+        }
+    }
 
     var body: some View {
         HStack(spacing: 0) {
-            cell(model.speed.map { "\($0)×" } ?? "–", "real time")
-            Divider().frame(height: 26)
-            cell(model.memoryMB.map { "\($0) MB" } ?? "–", "memory")
-            Divider().frame(height: 26)
-            cell(model.audioSeconds.map { Transcript.clock($0) } ?? "–", "of audio")
-            Divider().frame(height: 26)
-            cell(model.secondsLeft.map { Model.duration(Double($0)) } ?? "–", "left")
+            Button(item.title) { latch.activate { model.view(item.id) } }
+                .buttonStyle(
+                    PressStyle(fire: { latch.press { model.view(item.id) } }) { hover, _ in
+                        let lit = hover && opens
+                        HStack(spacing: 10) {
+                            Text(String(format: "%02d", number)).foregroundStyle(lit ? Color.black : Ink.grey)
+                            Thumb(url: item.thumbnail, width: 40).opacity(item.state == .waiting ? 0.5 : 1)
+                            Text(item.title.uppercased())
+                                .foregroundStyle(lit ? Color.black : item.state == .waiting ? Ink.grey : Ink.white)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Spacer(minLength: 12)
+                            Text(status.text)
+                                .foregroundStyle(lit ? Color.black : status.color)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                                .layoutPriority(1)
+                                .frame(maxWidth: 300, alignment: .trailing)
+                        }
+                        .font(Ink.mono(12))
+                        .padding(.horizontal, 8)
+                        .frame(height: 34)
+                        .background { Rectangle().fill(lit ? Ink.white : Color.clear) }
+                    }
+                )
+                .allowsHitTesting(opens)  // not `disabled`: a waiting or failed row is information, not a dimmed control
+                .focusEffectDisabled()
+            if item.state == .waiting { Key("Drop") { model.remove(item.id) } }
         }
-        .frame(width: 420)
-        .accessibilityElement(children: .combine)
-    }
-
-    private func cell(_ value: String, _ label: String) -> some View {
-        VStack(spacing: 2) {
-            Text(value)
-                .font(.system(size: 15, weight: .medium))
-                .monospacedDigit()
-                .contentTransition(.identity)
-            Text(label)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity)
+        .overlay(alignment: .bottom) { Hairline().padding(.horizontal, 8) }
     }
 }
 
-/// A small picture for a link, fetched once and kept only in memory. Shows a quiet tile until it arrives.
+/// A recording's picture, square-cornered and small, fetched once and kept only in memory.
 struct Thumb: View {
     let url: String?
     var width: Double = 64
@@ -432,21 +699,13 @@ struct Thumb: View {
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: width * 0.09, style: .continuous).fill(.primary.opacity(0.06))
+            Rectangle().fill(Ink.unlit)
             if let image {
-                Image(nsImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .transition(.opacity)
-            } else {
-                Image(systemName: "waveform")
-                    .font(.system(size: width * 0.22, weight: .light))
-                    .foregroundStyle(.quaternary)
+                Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
             }
         }
         .frame(width: width, height: (width * 9 / 16).rounded())
-        .clipShape(RoundedRectangle(cornerRadius: width * 0.09, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: width * 0.09, style: .continuous).strokeBorder(.primary.opacity(0.08)))
+        .clipped()
         .accessibilityHidden(true)
         .task(id: url) {
             guard image == nil, let url, let address = URL(string: url), address.scheme?.hasPrefix("http") == true else { return }
@@ -457,33 +716,12 @@ struct Thumb: View {
                     source, 0,
                     [
                         kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true,
-                        kCGImageSourceThumbnailMaxPixelSize: max(320, width * 2),
+                        kCGImageSourceThumbnailMaxPixelSize: max(160, width * 2),
                     ] as CFDictionary)
             else { return }
             let picture = NSImage(cgImage: small, size: .zero)
             Self.cache.setObject(picture, forKey: url as NSString)
-            withAnimation(.easeOut(duration: 0.2)) { image = picture }
-        }
-    }
-}
-
-/// A soft highlight that travels along the bar while a stage has nothing measurable to report.
-/// It exists only during such a stage, so nothing animates once the work stops.
-struct Glide: View {
-    let animated: Bool
-    @State private var travelled = false
-
-    var body: some View {
-        GeometryReader { geo in
-            Capsule()
-                // Mid grey shows against both the filled part of the bar and the empty track, light or dark.
-                .fill(LinearGradient(colors: [.clear, .gray, .clear], startPoint: .leading, endPoint: .trailing))
-                .frame(width: 96)
-                .offset(x: animated ? (travelled ? geo.size.width : -96) : (geo.size.width - 96) / 2)
-        }
-        .onAppear {
-            guard animated else { return }
-            withAnimation(.easeInOut(duration: 1.25).repeatForever(autoreverses: false)) { travelled = true }
+            image = picture
         }
     }
 }
@@ -497,275 +735,36 @@ struct FailureView: View {
     @State private var copied = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 40, weight: .light))
-                .foregroundStyle(.tertiary)
-                .frame(height: 48)
-                .accessibilityHidden(true)
-            Text("Couldn’t transcribe")
-                .font(.system(size: 28, weight: .semibold))
-                .padding(.top, 14)
-            Text(message)
-                .font(.system(size: 15))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .lineLimit(5)
+        Readout {
+            Tag("Err", color: Ink.red)
+            Text("NO TRANSCRIPT")
+                .font(Ink.mono(20))
+                .foregroundStyle(Ink.white)
+                .padding(.top, 3)
+            Bar(fraction: 1, level: .critical).frame(maxWidth: 160).padding(.top, 6)
+
+            Hairline().padding(.top, 14).padding(.bottom, 12)
+            Text(message.uppercased())
+                .font(Ink.mono(12))
+                .foregroundStyle(Ink.white)
+                .lineSpacing(5)
                 .textSelection(.enabled)
-                .frame(maxWidth: 360)
-                .padding(.top, 6)
+                .frame(maxWidth: 560, alignment: .leading)
             if let command {
-                HStack(spacing: 10) {
-                    Text(command)
-                        .font(.system(size: 13, design: .monospaced))
-                        .textSelection(.enabled)
-                    Button {
+                HStack(spacing: 4) {
+                    Tag("Run").padding(.trailing, 8)
+                    Text(command).font(Ink.mono(12)).foregroundStyle(Ink.white).textSelection(.enabled)
+                    Key(copied ? "Copied" : "Copy") {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(command, forType: .string)
                         copied = true
-                    } label: {
-                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                            .contentTransition(.symbolEffect(.replace))
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .help("Copy the command")
-                    .accessibilityLabel("Copy the install command")
+                    .padding(.leading, 8)
+                    Spacer(minLength: 0)
                 }
-                .padding(.horizontal, 14)
-                .frame(height: 34)
-                .background(.primary.opacity(0.045), in: Capsule())
-                .padding(.top, 20)
-            }
-            HStack(spacing: 10) {
-                Button("Start Over") { model.reset() }
-                    .keyboardShortcut(.cancelAction)
-                Button("Try Again") { model.retry() }
-                    .keyboardShortcut(.defaultAction)
-            }
-            .controlSize(.large)
-            .padding(.top, 28)
-        }
-        .padding(.horizontal, 32)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .ignoresSafeArea(.container, edges: .top)
-    }
-}
-
-// MARK: - Playlists and channels
-
-/// Shown for the second or two it takes to read what a playlist or channel holds.
-struct LookingView: View {
-    let model: Model
-
-    var body: some View {
-        VStack(spacing: 0) {
-            ProgressView().controlSize(.regular).frame(height: 48)
-            Text("Reading the list")
-                .font(.system(size: 15, weight: .medium))
                 .padding(.top, 14)
-            Button("Cancel") { model.cancel() }
-                .keyboardShortcut(.cancelAction)
-                .controlSize(.large)
-                .padding(.top, 34)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .ignoresSafeArea(.container, edges: .top)
-    }
-}
-
-/// A playlist or channel was pasted: how many of its recordings to transcribe, and where they go.
-struct ChooseView: View {
-    @Bindable var model: Model
-    let list: LinkList
-
-    private var folder: URL { model.batchFolder ?? model.defaultFolder(for: list) }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            // The first few pictures, fanned like a small pile, say "many" without a word.
-            ZStack {
-                ForEach(Array(list.items.prefix(3).enumerated().reversed()), id: \.offset) { i, item in
-                    Thumb(url: item.thumbnail, width: 168)
-                        .scaleEffect(1 - Double(i) * 0.07)
-                        .offset(y: Double(i) * -11)
-                        .opacity(1 - Double(i) * 0.3)
-                }
             }
-            .padding(.top, 22)
-            Text(list.title)
-                .font(.system(size: 28, weight: .semibold))
-                .multilineTextAlignment(.center)
-                .lineLimit(2)
-                .padding(.top, 20)
-            Text(list.more ? "More than \(list.items.count) videos" : "\(list.items.count) videos")
-                .font(.system(size: 15))
-                .foregroundStyle(.secondary)
-                .padding(.top, 4)
-
-            HStack(spacing: 8) {
-                Text(list.isChannel ? "Transcribe the newest" : "Transcribe the first")
-                Picker("How many", selection: $model.batchCount) {
-                    ForEach(model.batchChoices, id: \.self) { n in
-                        Text(n == list.items.count && !list.more ? "\(n) (all)" : "\(n)").tag(n)
-                    }
-                }
-                .labelsHidden()
-                .fixedSize()
-            }
-            .font(.system(size: 14))
-            .padding(.top, 28)
-
-            HStack(spacing: 6) {
-                Text("Saved to \(folder.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))")
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Button("Change…") { model.chooseFolder(for: list) }
-                    .buttonStyle(.link)
-            }
-            .font(.system(size: 12))
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: 420)
-            .padding(.top, 12)
-
-            HStack(spacing: 10) {
-                Button("Cancel") { model.reset() }
-                    .keyboardShortcut(.cancelAction)
-                Button("Transcribe") { model.startBatch(list) }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
-            }
-            .controlSize(.large)
-            .padding(.top, 28)
-        }
-        .padding(.horizontal, 32)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .ignoresSafeArea(.container, edges: .top)
-    }
-}
-
-/// The queue: everything asked for this session. The row in hand opens its progress, finished rows their transcript.
-struct BatchView: View {
-    let model: Model
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                Text(model.listTitle)
-                    .font(.system(size: 28, weight: .semibold))
-                    .lineLimit(2)
-                HStack(spacing: 10) {
-                    Text(summary)
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                    if model.running {
-                        Button("Stop") { model.cancel() }
-                            .keyboardShortcut(.cancelAction)
-                            .controlSize(.small)
-                            .buttonBorderShape(.capsule)
-                    } else if model.waitingCount > 0 {
-                        Button("Resume") { model.resume() }
-                            .controlSize(.small)
-                            .buttonBorderShape(.capsule)
-                    }
-                }
-                .padding(.top, 4)
-                .padding(.bottom, 18)
-                LazyVStack(spacing: 0) {
-                    ForEach(model.jobs) { item in
-                        BatchRow(model: model, item: item)
-                        Divider().opacity(0.5)
-                    }
-                }
-                ModelChip()
-                    .padding(.top, 16)
-            }
-            .frame(maxWidth: 560, alignment: .leading)
-            .padding(.horizontal, 32)
-            .padding(.top, 76)
-            .padding(.bottom, 40)
-            .frame(maxWidth: .infinity)
-        }
-        .contentMargins(.top, 56, for: .scrollIndicators)  // the scroll bar starts below the toolbar, not under its buttons
-        .ignoresSafeArea(.container, edges: .top)
-    }
-
-    private var summary: String {
-        let failed = model.jobs.count { if case .failed = $0.state { true } else { false } }
-        var text = "\(model.doneCount) of \(model.jobs.count) transcribed"
-        if failed > 0 { text += " · \(failed) failed" }
-        if !model.running, model.waitingCount > 0 { text += " · stopped" }
-        if let left = model.queueTimeLeft { text += " · \(left)" }
-        return text
-    }
-}
-
-struct BatchRow: View {
-    let model: Model
-    let item: Model.Job
-
-    private var opens: Bool {
-        switch item.state {
-        case .done, .working: true
-        default: false
-        }
-    }
-
-    var body: some View {
-        HStack(spacing: 4) {
-            Button { model.view(item.id) } label: {
-                HStack(spacing: 12) {
-                    Thumb(url: item.thumbnail, width: 72)
-                        .opacity(item.state == .waiting ? 0.55 : 1)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(item.title)
-                            .font(.system(size: 14))
-                            .foregroundStyle(item.state == .waiting ? .secondary : .primary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        Group {
-                            switch item.state {
-                            case .failed(let why): Text(why).lineLimit(2)
-                            case .working:
-                                Text("\(model.stage.label) · \(model.percent)%" + (model.secondsLeft.map { " · \(Model.duration(Double($0))) left" } ?? ""))
-                            case .done(let words):
-                                Text("\(words.formatted()) words" + (item.seconds.map { " · \(Transcript.clock($0))" } ?? ""))
-                            case .waiting: Text(item.seconds.map { Transcript.clock($0) } ?? "Waiting")
-                            }
-                        }
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                    }
-                    Spacer(minLength: 12)
-                    Group {
-                        switch item.state {
-                        case .waiting: EmptyView()
-                        case .working: ProgressView().controlSize(.small)
-                        case .done: Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(.tertiary)
-                        case .failed: Image(systemName: "exclamationmark.circle").foregroundStyle(.orange)
-                        }
-                    }
-                    .frame(width: 18)
-                    .accessibilityHidden(true)
-                }
-                .padding(.vertical, 10)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .allowsHitTesting(opens)  // not `disabled`, which would grey out the row that is being worked on
-            .accessibilityHint(opens ? "Opens it" : "")
-            if item.state == .waiting {
-                Button { model.remove(item.id) } label: {
-                    Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
-                        .frame(width: 18, height: 18)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("Remove from the queue")
-                .accessibilityLabel("Remove from the queue")
-            }
+            Spacer(minLength: 0)
         }
     }
 }

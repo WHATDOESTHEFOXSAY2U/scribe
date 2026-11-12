@@ -147,13 +147,13 @@ final class Model {
     var queueSummary: String? {
         guard !jobs.isEmpty else { return nil }
         if running {
-            var text = "Transcribing · \(percent)%"
-            if let left = queueTimeLeft { text += " · \(left)" }
-            if waitingCount > 0 { text += " · \(waitingCount) waiting" }
+            var text = "RUN \(percent) %"
+            if let left = queueTimeLeft { text += "   " + left.uppercased().replacingOccurrences(of: "ABOUT ", with: "").replacingOccurrences(of: " LEFT", with: "") }
+            if waitingCount > 0 { text += "   \(waitingCount) WAIT" }
             return text
         }
-        if waitingCount > 0 { return "\(waitingCount) waiting · stopped" }
-        return doneCount == 1 ? "1 transcript" : "\(doneCount) transcripts"
+        if waitingCount > 0 { return "\(waitingCount) WAIT   STOPPED" }
+        return "\(doneCount) DONE"
     }
 
     /// The quiet line under the stage: the recording's name, or what a long one-time step is doing.
@@ -817,7 +817,8 @@ struct ScribeApp: App {
         Window("Scribe", id: "main") {
             RootView(model: model)
         }
-        .defaultSize(width: 720, height: 600)
+        .defaultSize(width: 660, height: 460)
+        .windowStyle(.hiddenTitleBar)  // the panel runs to the top edge; only close, minimise and zoom remain
         .windowResizability(.contentMinSize)
         .windowBackgroundDragBehavior(.enabled)
         .restorationBehavior(.disabled)  // no saved window snapshot: that alone held 6 MB while idle

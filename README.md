@@ -30,6 +30,8 @@ Drop a file. Or paste a link to a video, a playlist or a channel.
 You get a transcript with speaker labels, saved to a folder you choose.
 
 <div align="center">
+<img src="docs/working.png" width="600" alt="Transcribing: progress, speed, memory, time left">
+<br><br>
 <img src="docs/transcript.png" width="600" alt="A transcript">
 </div>
 

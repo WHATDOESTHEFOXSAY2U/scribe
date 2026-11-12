@@ -117,6 +117,61 @@ enum Snapshot {
         exit(0)
     }
 
+    /// Sends real mouse-down and mouse-up events to keys in an off-screen window and reports whether
+    /// each fired: `scribe --clicktest`. Works with the screen locked, unlike the live check.
+    static func clickTest() -> Never {
+        NSApplication.shared.setActivationPolicy(.accessory)
+        let model = Model()
+        model.pose(.result(sampleTranscript()))
+        let size = CGSize(width: 720, height: 600)
+        let window = makeWindow(model: model, size: size, dark: true)
+        window.orderFrontRegardless()  // buttons only take events in an ordered-in window
+        settle(0.5)
+        func press(x: CGFloat, fromTop y: CGFloat, release: Bool = true) {
+            let point = NSPoint(x: x < 0 ? size.width + x : x, y: window.frame.height - y)
+            for type in [NSEvent.EventType.leftMouseDown] + (release ? [.leftMouseUp] : []) {
+                if let event = NSEvent.mouseEvent(
+                    with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
+                {
+                    window.sendEvent(event)
+                }
+                settle(0.15)
+            }
+        }
+        var passed = true
+        func check(_ name: String, _ ok: Bool) {
+            print("\(ok ? "ok  " : "FAIL") \(name)")
+            passed = passed && ok
+        }
+        func under(_ x: CGFloat, _ y: CGFloat) -> String {
+            let view = window.contentView?.superview?.hitTest(NSPoint(x: x < 0 ? size.width + x : x, y: window.frame.height - y))
+            return view.map { String(describing: type(of: $0)) } ?? "nothing"
+        }
+        let y: CGFloat = 14  // the band's keys sit level with the window's own buttons
+        check("nothing of the system's covers BACK", under(95, y).contains("NSHostingView"))
+        check("nothing of the system's covers the right-hand keys", under(-60, y).contains("NSHostingView"))
+        press(x: -192, fromTop: y)
+        check("TIME toggles timestamps on", model.showTimes)
+        settle(0.8)
+        press(x: -192, fromTop: y)
+        check("one press is one toggle (off again)", !model.showTimes)
+        settle(0.8)
+        press(x: -60, fromTop: y, release: false)
+        check("COPY fires on mouse-down, before release", model.copied)
+        press(x: -60, fromTop: y)
+        press(x: 300, fromTop: y)
+        check("a press on the empty band does nothing", model.transcript != nil)
+        press(x: 95, fromTop: y)
+        check("BACK returns to the start screen", model.isStart)
+        model.pose(.empty)
+        settle(0.4)
+        let before = model.speakers
+        press(x: 205, fromTop: 200)
+        check("SPEAKERS switch toggles", model.speakers != before)
+        exit(passed ? 0 : 1)
+    }
+
     static func makeWindow(model: Model, size: CGSize, dark: Bool) -> NSWindow {
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: size),
@@ -126,7 +181,8 @@ enum Snapshot {
         window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         window.titlebarAppearsTransparent = true  // what the app's hidden toolbar background gives the real window
         window.titlebarSeparatorStyle = .none
-        window.backgroundColor = .textBackgroundColor  // the app's window gets this from containerBackground
+        window.titleVisibility = .hidden
+        window.backgroundColor = .black  // the app's window gets this from containerBackground
         let host = NSHostingView(rootView: RootView(model: model))
         host.sceneBridgingOptions = [.toolbars, .title]
         window.contentView = host
@@ -357,6 +413,37 @@ enum Snapshot {
         Task { @MainActor in
             func pause(_ seconds: Double) async { try? await Task.sleep(for: .seconds(seconds)) }
             await pause(0.9)
+            if env["SCRIBE_LIVE_CLICKS"] != nil {
+                // Real mouse events through the real window: do the keys fire on mouse-down?
+                @MainActor func click(_ name: String, x: CGFloat, fromTop y: CGFloat) async {
+                    guard let window = NSApp.windows.first(where: { $0.contentView != nil && !($0 is NSPanel) }) else {
+                        return report.append("\(name): no window")
+                    }
+                    let point = NSPoint(x: x < 0 ? window.frame.width + x : x, y: window.frame.height - y)
+                    for (type, count) in [(NSEvent.EventType.leftMouseDown, 1), (.leftMouseUp, 1)] {
+                        if let event = NSEvent.mouseEvent(
+                            with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                            windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: count, pressure: 1)
+                        {
+                            window.sendEvent(event)
+                        }
+                        if type == .leftMouseDown { report.append("\(name) on mouse-down: showTimes \(model.showTimes), start screen \(model.isStart)") }
+                        await pause(0.15)
+                    }
+                    await pause(0.4)
+                }
+                model.pose(.result(sampleTranscript()))
+                await pause(0.9)
+                let before = model.showTimes
+                report.append("before: showTimes \(before), start screen \(model.isStart)")
+                await click("TIME", x: -192, fromTop: 26)
+                report.append("TIME key toggled timestamps: \(model.showTimes != before)")
+                shoot("clicked-time")
+                await click("BACK", x: 107, fromTop: 26)
+                report.append("BACK key returned to start: \(model.isStart)")
+                if model.showTimes != before { model.showTimes = before }
+                finish("live-clicks.txt")
+            }
             guard let input = env["SCRIBE_LIVE_INPUT"] else {
                 let steps: [(String, () -> Void)] = [
                     ("empty", {}),
