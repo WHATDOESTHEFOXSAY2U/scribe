@@ -183,7 +183,7 @@ enum Mark {
 enum Engine {
     static let modelVersion: AsrModelVersion = .ultra
     /// What the window says is doing the work.
-    static let modelLine = "Parakeet Ultra · on this Mac"
+    static let modelName = "Parakeet Ultra"
     /// The model whose punctuation and capitals are borrowed (see `copyPunctuation`).
     static let polishVersion: AsrModelVersion = .v2
     /// Off (`--fast`) skips the punctuation pass: about twice as quick, plainer punctuation.

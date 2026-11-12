@@ -130,6 +130,7 @@ enum Typesetter {
         if t.wallSeconds > 0 {
             let w = t.wallSeconds
             facts.append("transcribed in " + (w < 10 ? String(format: "%.1f s", w) : w < 100 ? "\(Int(w)) s" : Transcript.clock(w)))
+            facts.append("by " + Engine.modelName)
         }
         add(facts.joined(separator: "  ·  ") + "\n", smallFont, .secondaryLabelColor, style { $0.paragraphSpacing = (size * 0.5).rounded() })
         if let note = t.speakerNote {

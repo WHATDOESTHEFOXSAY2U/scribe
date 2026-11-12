@@ -160,6 +160,8 @@ struct StartView: View {
                 Button { model.showLibrary() } label: { Label("Transcripts", systemImage: "folder") }
                     .buttonStyle(.plain)
                     .help("Every transcript is saved here as a text file (⇧⌘O)")
+                Label(Engine.modelName, systemImage: "cpu")
+                    .help("The speech model doing the transcribing. It runs on this Mac; nothing is uploaded.")
             }
             .font(.system(size: 12))
             .foregroundStyle(.secondary)
@@ -296,11 +298,28 @@ struct WorkingView: View {
         .ignoresSafeArea(.container, edges: .top)
         .animation(reduceMotion ? nil : .smooth(duration: 0.3), value: model.thumbnail)
         .overlay(alignment: .bottom) {
-            Text(Engine.modelLine + (model.waitingCount > 0 ? "  ·  \(model.waitingCount) more waiting" : ""))
-                .font(.system(size: 11))
-                .foregroundStyle(.tertiary)
-                .padding(.bottom, 22)
+            HStack(spacing: 10) {
+                ModelChip()
+                if model.waitingCount > 0 {
+                    Text("\(model.waitingCount) more waiting").font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+            }
+            .padding(.bottom, 22)
         }
+    }
+}
+
+/// Says which speech model is doing the work, and that it is doing it here.
+struct ModelChip: View {
+    var body: some View {
+        Label("\(Engine.modelName) · on this Mac", systemImage: "cpu")
+            .font(.system(size: 12))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 12)
+            .frame(height: 26)
+            .background(.primary.opacity(0.06), in: Capsule())
+            .help("The speech model doing the transcribing. It runs on this Mac; nothing is uploaded.")
+            .accessibilityLabel("Speech model: \(Engine.modelName), running on this Mac")
     }
 }
 
@@ -617,10 +636,8 @@ struct BatchView: View {
                         Divider().opacity(0.5)
                     }
                 }
-                Text(Engine.modelLine)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
-                    .padding(.top, 14)
+                ModelChip()
+                    .padding(.top, 16)
             }
             .frame(maxWidth: 560, alignment: .leading)
             .padding(.horizontal, 32)
