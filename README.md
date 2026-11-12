@@ -33,11 +33,26 @@ You get a transcript with speaker labels, saved to `~/Documents/Scribe`.
 <img src="docs/transcript.png" width="600" alt="A transcript">
 </div>
 
-## Inside
+## Numbers
 
-[Parakeet Ultra](https://huggingface.co/moondream/parakeet-ultra), running on your Mac through [FluidAudio](https://github.com/FluidInference/FluidAudio). Nothing is uploaded.
+<div align="center">
 
-17 minutes of audio in about 15 seconds.
+| **65×** | **15 s** | **9.4%** | **20 MB** |
+|:---:|:---:|:---:|:---:|
+| real time | for 17 minutes of audio | word error rate | memory at rest |
+
+<sub>M1 Pro, speaker labels on. Whisper large-v3 scored 10.3% on the same 86-minute test and took about 10 times as long.</sub>
+
+</div>
+
+## Model
+
+| | |
+|---|---|
+| **Words** | [Parakeet Ultra](https://huggingface.co/moondream/parakeet-ultra), 0.6B parameters |
+| **Punctuation** | Parakeet v2 |
+| **Speakers** | pyannote + WeSpeaker |
+| **Runs on** | Your Mac's Neural Engine, through [FluidAudio](https://github.com/FluidInference/FluidAudio). Nothing is uploaded. |
 
 ## Fork it
 
