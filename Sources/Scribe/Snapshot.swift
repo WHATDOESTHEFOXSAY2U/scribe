@@ -150,16 +150,16 @@ enum Snapshot {
         }
         let y: CGFloat = 14  // the band's keys sit level with the window's own buttons
         check("nothing of the system's covers BACK", under(95, y).contains("NSHostingView"))
-        check("nothing of the system's covers the right-hand keys", under(-60, y).contains("NSHostingView"))
-        press(x: -192, fromTop: y)
-        check("TIME toggles timestamps on", model.showTimes)
+        check("nothing of the system's covers the right-hand keys", under(-49, y).contains("NSHostingView"))
+        press(x: -275, fromTop: y)
+        check("Timestamps toggles on", model.showTimes)
         settle(0.8)
-        press(x: -192, fromTop: y)
+        press(x: -275, fromTop: y)
         check("one press is one toggle (off again)", !model.showTimes)
         settle(0.8)
-        press(x: -60, fromTop: y, release: false)
-        check("COPY fires on mouse-down, before release", model.copied)
-        press(x: -60, fromTop: y)
+        press(x: -49, fromTop: y, release: false)
+        check("Copy fires on mouse-down, before release", model.copied)
+        press(x: -49, fromTop: y)
         press(x: 300, fromTop: y)
         check("a press on the empty band does nothing", model.transcript != nil)
         press(x: 95, fromTop: y)
@@ -167,7 +167,7 @@ enum Snapshot {
         model.pose(.empty)
         settle(0.4)
         let before = model.speakers
-        press(x: 205, fromTop: 200)
+        press(x: 193, fromTop: 195)
         check("SPEAKERS switch toggles", model.speakers != before)
         exit(passed ? 0 : 1)
     }
@@ -182,7 +182,7 @@ enum Snapshot {
         window.titlebarAppearsTransparent = true  // what the app's hidden toolbar background gives the real window
         window.titlebarSeparatorStyle = .none
         window.titleVisibility = .hidden
-        window.backgroundColor = .black  // the app's window gets this from containerBackground
+        window.backgroundColor = .textBackgroundColor  // the app's window gets this from containerBackground
         let host = NSHostingView(rootView: RootView(model: model))
         host.sceneBridgingOptions = [.toolbars, .title]
         window.contentView = host

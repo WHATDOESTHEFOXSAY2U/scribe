@@ -147,13 +147,13 @@ final class Model {
     var queueSummary: String? {
         guard !jobs.isEmpty else { return nil }
         if running {
-            var text = "RUN \(percent) %"
-            if let left = queueTimeLeft { text += "   " + left.uppercased().replacingOccurrences(of: "ABOUT ", with: "").replacingOccurrences(of: " LEFT", with: "") }
-            if waitingCount > 0 { text += "   \(waitingCount) WAIT" }
+            var text = "Transcribing · \(percent)%"
+            if let left = queueTimeLeft { text += " · \(left)" }
+            if waitingCount > 0 { text += " · \(waitingCount) waiting" }
             return text
         }
-        if waitingCount > 0 { return "\(waitingCount) WAIT   STOPPED" }
-        return "\(doneCount) DONE"
+        if waitingCount > 0 { return "\(waitingCount) waiting · stopped" }
+        return doneCount == 1 ? "1 transcript" : "\(doneCount) transcripts"
     }
 
     /// The quiet line under the stage: the recording's name, or what a long one-time step is doing.
