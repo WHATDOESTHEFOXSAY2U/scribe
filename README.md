@@ -33,6 +33,18 @@ You get a transcript with speaker labels, saved to a folder you choose.
 <img src="docs/transcript.png" width="600" alt="A transcript">
 </div>
 
+## Terminal
+
+No window needed. It works in scripts, and AI agents can call it.
+
+```bash
+scribe talk.mp4                         # transcript to standard output
+scribe "https://youtu.be/…" --json      # structured, with timestamps and speakers
+scribe <playlist> --limit 5 -o notes/   # a folder of text files
+```
+
+`scribe --help` lists the rest.
+
 ## Numbers
 
 <div align="center">

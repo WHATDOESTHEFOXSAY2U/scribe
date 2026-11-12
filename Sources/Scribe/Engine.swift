@@ -911,7 +911,17 @@ enum Engine {
         return LinkList(title: name, items: Array(items.prefix(limit)), more: items.count > limit, isChannel: isChannel)
     }
 
+    /// Downloads a link's audio. A site that refuses or drops the connection is asked once more
+    /// after a short pause, since that is usually momentary.
     private static func download(_ link: String, into dir: URL, reporter: Reporter) async throws -> URL {
+        do { return try await downloadOnce(link, into: dir, reporter: reporter) } catch let error as ScribeError {
+            guard case .message(let why) = error, why.contains("refused the download") || why.contains("connection failed") else { throw error }
+            try await Task.sleep(for: .seconds(2))
+            return try await downloadOnce(link, into: dir, reporter: reporter)
+        }
+    }
+
+    private static func downloadOnce(_ link: String, into dir: URL, reporter: Reporter) async throws -> URL {
         var path: String?
         let result = try await run(
             try tool("yt-dlp"),

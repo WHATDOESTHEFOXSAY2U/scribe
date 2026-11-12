@@ -402,7 +402,7 @@ final class Model {
         }
     }
 
-    static func fileName(_ title: String) -> String {
+    nonisolated static func fileName(_ title: String) -> String {
         let clean = title.map { "/:\\".contains($0) || $0.isNewline ? "-" : $0 }
         let name = String(String(clean).trimmingCharacters(in: .whitespaces).prefix(110))
         return name.isEmpty || name.hasPrefix(".") ? "Untitled" : name
