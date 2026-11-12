@@ -27,7 +27,7 @@ Apple Silicon, macOS 26 or later.
 
 Drop a file. Or paste a link to a video, a playlist or a channel.
 
-You get a transcript with speaker labels, saved to `~/Documents/Scribe`.
+You get a transcript with speaker labels, saved to a folder you choose.
 
 <div align="center">
 <img src="docs/transcript.png" width="600" alt="A transcript">

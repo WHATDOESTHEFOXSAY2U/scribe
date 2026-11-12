@@ -157,9 +157,19 @@ struct StartView: View {
                     .toggleStyle(.switch)
                     .controlSize(.mini)
                     .help("Label who is speaking. Turning this off is faster and uses less memory, most of all on long recordings.")
-                Button { model.showLibrary() } label: { Label("Transcripts", systemImage: "folder") }
-                    .buttonStyle(.plain)
-                    .help("Every transcript is saved here as a text file (⇧⌘O)")
+                Menu {
+                    Section("Saved to \(model.libraryPath)") {
+                        Button("Open Folder") { model.showLibrary() }
+                        Button("Change Folder…") { model.chooseLibrary() }
+                    }
+                } label: {
+                    Label("Transcripts", systemImage: "folder")
+                }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Every transcript is saved as a text file in \(model.libraryPath)")
                 Label(Engine.modelName, systemImage: "cpu")
                     .help("The speech model doing the transcribing. It runs on this Mac; nothing is uploaded.")
             }

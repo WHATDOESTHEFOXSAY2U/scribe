@@ -43,6 +43,11 @@ final class Model {
     var showTimes: Bool { didSet { store(showTimes, "showTimes") } }
     var speakers: Bool { didSet { store(speakers, "speakers") } }
     var textSize: Double { didSet { store(textSize, "textSize") } }
+    /// The folder finished transcripts are saved in. Asked for once, before the first job, then remembered.
+    private(set) var library: URL
+    private(set) var libraryChosen: Bool
+    @ObservationIgnored private var askingForLibrary = false
+    @ObservationIgnored private var heldInputs: [String] = []
 
     // Every recording asked for this session, in the order it is (or was) worked on. One runs at a
     // time; the rest wait. Leaving a job's screen never stops it.
@@ -114,6 +119,10 @@ final class Model {
         speakers = !persist || d.object(forKey: "speakers") == nil || d.bool(forKey: "speakers")
         let size = persist ? d.double(forKey: "textSize") : 0
         textSize = size >= 12 && size <= 22 ? size : 15
+        let saved = persist ? d.string(forKey: "library") : nil
+        library = saved.map { URL(fileURLWithPath: $0) } ?? Self.defaultLibrary
+        // Automated self-checks never stop to ask.
+        libraryChosen = !persist || saved != nil || ProcessInfo.processInfo.environment["SCRIBE_LIVE_CHECK"] != nil
     }
 
     private func store(_ value: Any, _ key: String) {
@@ -166,6 +175,20 @@ final class Model {
         let input = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if case .looking = phase { return }
         guard !input.isEmpty else { return }
+        // First use: where the transcripts go is the user's call, so ask before doing anything.
+        // Everything dropped or pasted meanwhile waits for the answer.
+        guard libraryChosen else {
+            heldInputs.append(input)
+            if !askingForLibrary {
+                chooseLibrary { [weak self] in
+                    guard let self else { return }
+                    let held = self.heldInputs
+                    self.heldInputs = []
+                    held.forEach { self.start($0) }
+                }
+            }
+            return
+        }
         lastInput = input
         link = ""
         if Engine.isCollection(input) { return lookUp(input) }
@@ -221,7 +244,7 @@ final class Model {
                     try? JSONEncoder().encode(t).write(to: cache.appendingPathComponent("\(id).json"))
                     // Every transcript is kept as a text file without being asked: a playlist's in its own
                     // folder, anything else straight in the transcripts folder.
-                    let file = next.saveTo ?? Self.library.appendingPathComponent(Self.fileName(t.title) + ".txt")
+                    let file = next.saveTo ?? library.appendingPathComponent(Self.fileName(t.title) + ".txt")
                     try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
                     let source = next.input.lowercased().hasPrefix("http") ? next.input + "\n" : ""
                     try? "\(t.title)\n\(source)\n\(t.plain)\n".write(to: file, atomically: true, encoding: .utf8)
@@ -338,16 +361,45 @@ final class Model {
         return total > 0 ? "about \(Self.duration(total)) left" : nil
     }
 
-    /// Where finished transcripts are kept: Documents/Scribe.
-    static let library = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Scribe")
+    /// Where transcripts go until the user says otherwise: Documents/Scribe.
+    static let defaultLibrary = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Scribe")
+
+    /// The folder's path the way a person would write it.
+    var libraryPath: String { library.path.replacingOccurrences(of: NSHomeDirectory(), with: "~") }
 
     func defaultFolder(for list: LinkList) -> URL {
-        Self.library.appendingPathComponent(Self.fileName(list.title))
+        library.appendingPathComponent(Self.fileName(list.title))
     }
 
     func showLibrary() {
-        try? FileManager.default.createDirectory(at: Self.library, withIntermediateDirectories: true)
-        NSWorkspace.shared.open(Self.library)
+        try? FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(library)
+    }
+
+    /// Asks where transcripts should be saved. Closing the panel without choosing keeps the current
+    /// folder; either way the question is not asked again, and the answer can be changed at any time.
+    func chooseLibrary(then done: (() -> Void)? = nil) {
+        guard !askingForLibrary else { return }
+        askingForLibrary = true
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Save Here"
+        panel.message = "Choose where Scribe saves your transcripts. You can change this later."
+        try? FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
+        panel.directoryURL = library
+        let finish: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            guard let self else { return }
+            if response == .OK, let url = panel.url { self.library = url }
+            self.libraryChosen = true
+            self.askingForLibrary = false
+            if self.persist { UserDefaults.standard.set(self.library.path, forKey: "library") }
+            done?()
+        }
+        if let window = NSApp.keyWindow ?? NSApp.mainWindow { panel.beginSheetModal(for: window, completionHandler: finish) } else {
+            finish(panel.runModal())
+        }
     }
 
     static func fileName(_ title: String) -> String {
@@ -794,6 +846,7 @@ struct ScribeCommands: Commands {
                 .keyboardShortcut("o")
             Button("Show Transcripts Folder") { model.showLibrary() }
                 .keyboardShortcut("o", modifiers: [.command, .shift])
+            Button("Change Transcripts Folder…") { model.chooseLibrary() }
         }
         CommandGroup(after: .saveItem) {
             Button("Save as Text…") { model.save(srt: false) }
