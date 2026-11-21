@@ -41,6 +41,7 @@ enum CommandLineTool {
           --format <f>          txt (default), timestamps, srt or json
           --json, --srt, --timestamps   short for --format
           --limit <n>           recordings to take from a playlist or channel (default 10)
+          --list                print what a playlist or channel holds, as JSON, and transcribe nothing
           --no-speakers         skip speaker labels (faster)
           --fast                skip the punctuation pass (faster, plainer punctuation)
           -q, --quiet           no progress on standard error
@@ -51,6 +52,10 @@ enum CommandLineTool {
         to standard error. Exit status: 0 done, 1 a recording failed, 2 bad usage, 130 cancelled.
         A failure prints one line starting "error:"; download failures are often momentary, so
         trying again is reasonable. Links are downloaded with yt-dlp; the audio never leaves this Mac.
+
+        --list prints one object: title, isChannel, more (the list was cut off at --limit),
+          items: [{ title, url, seconds }]. Nothing is downloaded. If the list cannot be read it
+          prints { error } instead (and missingTool when a tool such as yt-dlp is not installed).
 
         --json prints one object per recording (an array when there are several):
           title, source, durationSeconds, speakers (how many), model, text,
@@ -67,6 +72,7 @@ enum CommandLineTool {
         var speakers = true
         var quiet = false
         var job = false
+        var list = false
     }
 
     /// What `--json` prints for one recording.
@@ -117,6 +123,7 @@ enum CommandLineTool {
             case "--limit":
                 guard let n = Int(value(a)), n > 0 else { usageError("--limit needs a number above zero") }
                 o.limit = n
+            case "--list": o.list = true
             case "--no-speakers": o.speakers = false
             case "--fast": Engine.polish = false
             case "-q", "--quiet": o.quiet = true
@@ -151,7 +158,7 @@ enum CommandLineTool {
             sources.append(parent)
         }
         let options = o
-        work = Task { options.job ? await runJob(options) : await transcribeAll(options) }
+        work = Task { options.job ? await runJob(options) : options.list ? await runList(options) : await transcribeAll(options) }
         withExtendedLifetime(sources) { dispatchMain() }
     }
 
@@ -168,6 +175,45 @@ enum CommandLineTool {
             var reply = Engine.Wire(error: error.localizedDescription)
             if case ScribeError.missingTool(let tool) = error { reply.missingTool = tool }
             wire.send(reply)
+            exit(1)
+        }
+    }
+
+    /// What a playlist or channel holds, for another program to read: one JSON object on standard
+    /// output, with nothing downloaded and nothing transcribed. A list that cannot be read is an
+    /// object too, `{ error }`, so the caller never has to make sense of yt-dlp's own words.
+    static func runList(_ o: Options) async -> Never {
+        struct Reply: Encodable {
+            struct Item: Encodable {
+                let title: String
+                let url: String
+                let seconds: Double?
+            }
+            var title: String?
+            var isChannel: Bool?
+            var more: Bool?
+            var items: [Item]?
+            var error: String?
+            var missingTool: String?
+        }
+        func send(_ reply: Reply) {
+            guard var data = try? JSONEncoder().encode(reply) else { return }
+            data.append(10)
+            FileHandle.standardOutput.write(data)
+        }
+        do {
+            let list = try await Engine.list(o.inputs[0], limit: o.limit)
+            send(
+                Reply(
+                    title: list.title, isChannel: list.isChannel, more: list.more,
+                    items: list.items.map { Reply.Item(title: $0.title, url: $0.url, seconds: $0.seconds) }))
+            exit(0)
+        } catch is CancellationError {
+            exit(130)
+        } catch {
+            var reply = Reply(error: error.localizedDescription)
+            if case ScribeError.missingTool(let tool) = error { reply.missingTool = tool }
+            send(reply)
             exit(1)
         }
     }
